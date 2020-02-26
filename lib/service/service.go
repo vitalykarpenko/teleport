@@ -780,15 +780,9 @@ func initUploadHandler(auditConfig services.AuditConfig) (events.UploadHandler, 
 		}
 		return handler, nil
 	case teleport.SchemeS3:
-		region := auditConfig.Region
-		if uriRegion := uri.Query().Get(teleport.Region); uriRegion != "" {
-			region = uriRegion
-		}
-		handler, err := s3sessions.NewHandler(s3sessions.Config{
-			Bucket: uri.Host,
-			Region: region,
-			Path:   uri.Path,
-		})
+		config := s3sessions.Config{}
+		config.SetFromURL(uri, auditConfig.Region)
+		handler, err := s3sessions.NewHandler(config)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -846,10 +840,16 @@ func initExternalLog(auditConfig services.AuditConfig) (events.IAuditLog, error)
 			loggers = append(loggers, logger)
 		case dynamo.GetName():
 			hasNonFileLog = true
-			logger, err := dynamoevents.New(dynamoevents.Config{
+			cfg := dynamoevents.Config{
 				Tablename: uri.Host,
 				Region:    auditConfig.Region,
-			})
+			}
+			err = cfg.SetFromURL(uri)
+			if err != nil {
+				return nil, trace.Wrap(err)
+			}
+
+			logger, err := dynamoevents.New(cfg)
 			if err != nil {
 				return nil, trace.Wrap(err)
 			}
@@ -1269,6 +1269,7 @@ func (process *TeleportProcess) newAccessCache(cfg accessCacheConfig) (*cache.Ca
 	}
 	var cacheBackend backend.Backend
 	if cfg.inMemory {
+		process.Debugf("Creating in-memory backend for %v.", cfg.cacheName)
 		mem, err := memory.New(memory.Config{
 			Context:   process.ExitContext(),
 			EventsOff: !cfg.events,
@@ -1279,6 +1280,7 @@ func (process *TeleportProcess) newAccessCache(cfg accessCacheConfig) (*cache.Ca
 		}
 		cacheBackend = mem
 	} else {
+		process.Debugf("Creating sqlite backend for %v.", cfg.cacheName)
 		path := filepath.Join(append([]string{process.Config.DataDir, "cache"}, cfg.cacheName...)...)
 		if err := os.MkdirAll(path, teleport.SharedDirMode); err != nil {
 			return nil, trace.ConvertSystemError(err)
@@ -1347,6 +1349,7 @@ func (process *TeleportProcess) newLocalCache(clt auth.ClientI, setupConfig cach
 		return clt, nil
 	}
 	cache, err := process.newAccessCache(accessCacheConfig{
+		inMemory:  process.Config.CachePolicy.Type == memory.GetName(),
 		services:  clt,
 		setup:     process.setupCachePolicy(setupConfig),
 		cacheName: cacheName,

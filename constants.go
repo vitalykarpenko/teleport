@@ -327,6 +327,15 @@ const (
 	// Region is AWS region parameter
 	Region = "region"
 
+	// Endpoint is an optional Host for non-AWS S3
+	Endpoint = "endpoint"
+
+	// Insecure is an optional switch to use HTTP instead of HTTPS
+	Insecure = "insecure"
+
+	// DisableServerSideEncryption is an optional switch to opt out of SSE in case the provider does not support it
+	DisableServerSideEncryption = "disablesse"
+
 	// SchemeFile is a local disk file storage
 	SchemeFile = "file"
 
@@ -401,6 +410,10 @@ const (
 
 // MaxEnvironmentFileLines is the maximum number of lines in a environment file.
 const MaxEnvironmentFileLines = 1000
+
+// MaxResourceSize is the maximum size (in bytes) of a serialized resource.  This limit is
+// typically only enforced aginst resources that are likely to arbitrarily grow (e.g. PluginData).
+const MaxResourceSize = 1000000
 
 const (
 	// CertificateFormatOldSSH is used to make Teleport interoperate with older
@@ -584,8 +597,21 @@ const (
 )
 
 const (
-	// ExecSubCommand is the sub-command Teleport uses to re-exec itself.
+	// ExecSubCommand is the sub-command Teleport uses to re-exec itself for
+	// command execution (exec and shells).
 	ExecSubCommand = "exec"
+
+	// ForwardSubCommand is the sub-command Teleport uses to re-exec itself
+	// for port forwarding.
+	ForwardSubCommand = "forward"
+)
+
+const (
+	// ChanDirectTCPIP is a SSH channel of type "direct-tcpip".
+	ChanDirectTCPIP = "direct-tcpip"
+
+	// ChanSession is a SSH channel of type "session".
+	ChanSession = "session"
 )
 
 // RSAKeySize is the size of the RSA key.

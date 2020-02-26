@@ -63,6 +63,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	Loopback = "127.0.0.1"
+	Host     = "localhost"
+)
+
 // SetTestTimeouts affects global timeouts inside Teleport, making connections
 // work faster but consuming more CPU (useful for integration testing)
 func SetTestTimeouts(t time.Duration) {
@@ -507,6 +512,12 @@ func (i *TeleInstance) GenerateConfig(trustedSecrets []*InstanceSecrets, tconf *
 		},
 	}
 	tconf.Auth.SSHAddr.Addr = net.JoinHostPort(i.Hostname, i.GetPortAuth())
+	tconf.Auth.PublicAddrs = []utils.NetAddr{
+		utils.NetAddr{
+			AddrNetwork: "tcp",
+			Addr:        i.Hostname,
+		},
+	}
 	tconf.Proxy.SSHAddr.Addr = net.JoinHostPort(i.Hostname, i.GetPortProxy())
 	tconf.Proxy.WebAddr.Addr = net.JoinHostPort(i.Hostname, i.GetPortWeb())
 	tconf.Proxy.PublicAddrs = []utils.NetAddr{
@@ -565,6 +576,8 @@ func (i *TeleInstance) CreateEx(trustedSecrets []*InstanceSecrets, tconf *servic
 		if err != nil {
 			return trace.Wrap(err)
 		}
+		// set hardcode traits to trigger new style certificates
+		teleUser.SetTraits(map[string][]string{"testing": []string{"integration"}})
 		var roles []services.Role
 		if len(user.Roles) == 0 {
 			role := services.RoleForUser(teleUser)
@@ -839,12 +852,13 @@ func (i *TeleInstance) Reset() (err error) {
 	return nil
 }
 
-// AddUserUserWithRole adds user with assigned role
-func (i *TeleInstance) AddUserWithRole(username string, role services.Role) *User {
+// AddUserUserWithRole adds user with one or many assigned roles
+func (i *TeleInstance) AddUserWithRole(username string, roles ...services.Role) *User {
 	user := &User{
 		Username: username,
-		Roles:    []services.Role{role},
+		Roles:    make([]services.Role, len(roles)),
 	}
+	copy(user.Roles, roles)
 	i.Secrets.Users[username] = user
 	return user
 }

@@ -2,13 +2,13 @@
 
 Teleport standard session recordings only capture what is echoed to a terminal. 
 This has inherent advantages, for example because no input is captured, Teleport
-session recordings typically do not contain passwords that were ended into a terminal.
+session recordings typically do not contain passwords that were entered into a terminal.
 
-The disadvantages is that session recordings can by bypassed using several techniques.
+The disadvantage is that session recordings can by bypassed using several techniques:
 
 - **Obfuscation**. For example, even though the command ` echo Y3VybCBodHRwOi8vd3d3LmV4YW1wbGUuY29tCg== | base64 --decode | sh` does not contain 
 `curl http://www.example.com`, when decoded, that is what is run.
-- **Shell scripts**. For example if a user uploads and executes a script, the commands 
+- **Shell scripts**. For example, if a user uploads and executes a script, the commands 
 run within the script are not captured, simply the output.
 - **Terminal controls**. Terminals support a wide variety of controls including the 
 ability for users to disable terminal echo. This is frequently used when requesting
@@ -17,15 +17,15 @@ ability for users to disable terminal echo. This is frequently used when request
 Furthermore, due to their unstructured nature, session recordings are difficult to 
 ingest and perform monitoring/alerting on.
 
-!!! Note:
+!!! Note
 
     Enhanced Session Recording requires all parts of the Teleport system to be running
     4.2+. 
 
 # Requirements:
 
-## 1. Check / Patch Kernel.
-Teleport 4.2 with Enhanced Session Recording requires Linux kernel 4.18 (or above) as 
+## 1. Check / Patch Kernel
+Teleport 4.2+ with Enhanced Session Recording requires Linux kernel 4.18 (or above) as 
 well as kernel headers. 
 
 You can check your kernel version using the `uname` command. The output should look 
@@ -41,6 +41,7 @@ Linux ip-172-31-43-104.ec2.internal 4.19.72-25.58.amzn2.x86_64 x86_64 x86_64 x86
 | 8.0-1905	    |            4.18.0.80 ✅  |
 
 !!! Note
+
     At release we've only production tested Enhanced Session recording with CentOS 
     7 and 8. We welcome feedback for other Operating Systems, and simply require a
     Linux kernel 4.18 (or above). Please send feedback to [ben@gravitational.com](mailto:ben@gravitational.com)
@@ -84,6 +85,43 @@ Run the following script to download the prerequisites to build BCC tools, build
 
     We plan to soon support installing bcc-tools from packages instead of compiling them yourself to make taking advantage of enhanced session recording easier.
 
+### Script to Install BCC Tools on Ubuntu and Debian 
+**Example Script to install relevant bcc packages for Ubuntu and Debian**
+
+```sh
+#!/bin/bash
+
+# Download LLVM and Clang from the Trusty Repos.
+VER=trusty
+echo "deb http://llvm.org/apt/$VER/ llvm-toolchain-$VER-3.7 main
+deb-src http://llvm.org/apt/$VER/ llvm-toolchain-$VER-3.7 main" | \
+  sudo tee /etc/apt/sources.list.d/llvm.list
+wget -O - http://llvm.org/apt/llvm-snapshot.gpg.key | sudo apt-key add -
+sudo apt-get update
+
+sudo apt-get -y install bison build-essential cmake flex git libedit-dev \
+  libllvm6.0 llvm-6.0-dev libclang-6.0-dev python zlib1g-dev libelf-dev
+
+# Install Linux Kernel Headers
+sudo apt-get install linux-headers-$(uname -r)
+
+# Install additional tools.
+sudo apt install arping iperf3 netperf git
+
+# Install BCC.
+export MAKEFLAGS="-j16"
+git clone https://github.com/iovisor/bcc.git
+(cd bcc && git checkout v0.11.0)
+mkdir bcc/build; cd bcc/build
+cmake .. -DCMAKE_INSTALL_PREFIX=/usr
+make
+sudo make install
+
+# Install is done.
+echo "Install is complete, try running /usr/share/bcc/tools/execsnoop to verify install."
+```
+
+### Script to Install BCC Tools on CentOS 
 **Example Script to install relevant bcc packages for CentOS**
 
 Follow [bcc documentation](https://github.com/iovisor/bcc/blob/master/INSTALL.md#debian---source) on how to install the relevant tooling for other operating systems. 
@@ -153,7 +191,7 @@ echo "Install is complete, try running /usr/share/bcc/tools/execsnoop to verify 
 Follow our [installation instructions](../installation.md) to install Teleport Auth, Proxy 
 and Nodes. 
 
-Setup the Teleport node with this `etc/teleport.yaml` see our [configuration file setup](../admin-guide.md#configuration) for more instructions. 
+Set up the Teleport node with this `etc/teleport.yaml`. See our [configuration file setup](../admin-guide.md#configuration) for more instructions. 
 
 
 ```yaml
@@ -162,35 +200,36 @@ teleport:
   nodename: graviton-node
   auth_token: exampletoken
   auth_servers:
-  - 127.0.0.1:5000
+  # Replace with IP of Teleport Auth server.
+  - 127.0.0.1:3025
   data_dir: /var/lib/teleport
 proxy_service:
-  enabled: no
+  enabled: false
 auth_service:
-  enabled: no
+  enabled: false
 ssh_service:
-  enabled: yes
-    enhanced_recording:
-       # Enable or disable enhanced auditing for this node. Default value: false.
-       enabled: true
-    
-       # Optional: command_buffer_size is optional with a default value of 8 pages. 
-       command_buffer_size: 8
+  enabled: true
+  enhanced_recording:
+    # Enable or disable enhanced auditing for this node. Default value: false.
+    enabled: true
 
-       # Optional: disk_buffer_size is optional with default value of 128 pages.
-       disk_buffer_size: 128
+    # Optional: command_buffer_size is optional with a default value of 8 pages. 
+    command_buffer_size: 8
 
-       # Optional: network_buffer_size is optional with default value of 8 pages.
-       network_buffer_size: 8
+    # Optional: disk_buffer_size is optional with default value of 128 pages.
+    disk_buffer_size: 128
 
-       # Optional: Controls where cgroupv2 hierarchy is mounted. Default value: 
-       # /cgroup2.
-       cgroup_path: /cgroup2
+    # Optional: network_buffer_size is optional with default value of 8 pages.
+    network_buffer_size: 8
+
+    # Optional: Controls where cgroupv2 hierarchy is mounted. Default value: 
+    # /cgroup2.
+    cgroup_path: /cgroup2
 ```
 
-## 4. Test by logging into node via Teleport.
+## 4. Test by logging into node via Teleport
 
-**Session wih Enhanced Session Recording will be marked as 'true' in the logs.**
+**Session with Enhanced Session Recording will be marked as 'true' in the logs.**
 
 ```json
 {
@@ -212,4 +251,59 @@ ssh_service:
 ```
 
 ## 5. Inspect Logs
-The resulting enhanced session recording will be shown in the logs. 
+The resulting enhanced session recording will be shown in [Teleport's Audit Log](../architecture/teleport_auth.md#audit-log).
+
+
+```bash
+$ teleport-auth ~:  tree /var/lib/teleport/log
+/var/lib/teleport/log
+├── 1048a649-8f3f-4431-9529-0c53339b65a5
+│   ├── 2020-01-13.00:00:00.log
+│   └── sessions
+│       └── default
+│           ├── fad07202-35bb-11ea-83aa-125400432324-0.chunks.gz
+│           ├── fad07202-35bb-11ea-83aa-125400432324-0.events.gz
+│           ├── fad07202-35bb-11ea-83aa-125400432324-0.session.command-events.gz
+│           ├── fad07202-35bb-11ea-83aa-125400432324-0.session.network-events.gz
+│           └── fad07202-35bb-11ea-83aa-125400432324.index
+├── events.log -> /var/lib/teleport/log/1048a649-8f3f-4431-9529-0c53339b65a5/2020-01-13.00:00:00.log
+├── playbacks
+│   └── sessions
+│       └── default
+└── upload
+    └── sessions
+        └── default
+```
+
+To quickly check the status of the audit log, you can simply tail the logs with 
+`tail -f /var/lib/teleport/log/events.log`, the resulting capture from Teleport will 
+be a JSON log for each command and network request. 
+
+```json
+{"argv":["google.com"],"cgroup_id":4294968064,"code":"T4000I","ei":5,"event":"session.command","login":"root","namespace":"default","path":"/bin/ping","pid":2653,"ppid":2660,"program":"ping","return_code":0,"server_id":"96f2bed2-ebd1-494a-945c-2fd57de41644","sid":"44c6cea8-362f-11ea-83aa-125400432324","time":"2020-01-13T18:05:53.919Z","uid":"734930bb-00e6-4ee6-8798-37f1e9473fac","user":"benarent"}
+```
+
+Formatted, the resulting data will look like this: 
+```json 
+{ 
+  "argv":[ 
+    "google.com"
+    ],
+  "cgroup_id":4294968064,
+  "code":"T4000I",
+  "ei":5,
+  "event":"session.command",
+  "login":"root",
+  "namespace":"default",
+  "path":"/bin/ping",
+  "pid":2653,
+  "ppid":2660,
+  "program":"ping",
+  "return_code":0,
+  "server_id":"96f2bed2-ebd1-494a-945c-2fd57de41644",
+  "sid":"44c6cea8-362f-11ea-83aa-125400432324",
+  "time":"2020-01-13T18:05:53.919Z",
+  "uid":"734930bb-00e6-4ee6-8798-37f1e9473fac",
+  "user":"benarent"
+}
+```
