@@ -47,6 +47,11 @@ const (
 )
 
 const (
+	typeRaw   = 0
+	typeEvent = 1
+)
+
+const (
 	concurrentStreams = 2
 )
 
@@ -66,6 +71,8 @@ type Stream struct {
 	manager  *StreamManager
 	state    int64
 	uploader SessionUploader
+
+	sessionID string
 
 	// tarWriter is used to create the archive itself.
 	tarWriter *tar.Writer
@@ -129,24 +136,19 @@ func (s *Stream) Process(chunk *proto.SessionChunk) error {
 
 	switch chunk.GetState() {
 	case stateInit:
-		//fmt.Printf("--> Process: stateInit.\n")
+		s.sessionID = chunk.GetSessionID()
+		s.manager.Debugf("Changing state to INIT for stream %v.", s.sessionID)
 
-		// Create a reader/writer pipe to reduce overall memory usage. In the
-		// previous version of Teleport the entire archive was read in, expanded,
-		// validated, then uploaded. Now instead chunks are validated and uploaded
-		// as they come in.
+		// Create a streaming tar reader/writer to reduce how much of the archive
+		// is buffered in memory.
 		pr, pw := io.Pipe()
 		s.tarWriter = tar.NewWriter(pw)
 
-		// Start uploading data as it's written to the pipe.
+		// Kick off the upload in a goroutine so it can be uploaded as it
+		// is processed.
 		go s.upload(chunk.GetNamespace(), session.ID(chunk.GetSessionID()), pr)
 	case stateOpen:
-		//fmt.Printf("--> Process: stateOpen.\n")
-
-		//err = s.manager.takeSemaphore()
-		//if err != nil {
-		//	return trace.Wrap(err)
-		//}
+		s.manager.Debugf("Changing state to OPEN for stream %v.", s.sessionID)
 
 		//// Get a buffer from the pool.
 		s.zipBuffer = s.manager.pool.Get().(*bytes.Buffer)
@@ -253,9 +255,11 @@ func StreamSessionRecording(stream proto.AuthService_StreamSessionRecordingClien
 		return trail.FromGRPC(err)
 	}
 
+	// Open the tarball for reading, some content (like chunks) will be sent
+	// raw and some uncompressed and sent.
 	tr := tar.NewReader(r.Recording)
 	for {
-		hdr, err := tr.Next()
+		header, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
@@ -263,71 +267,56 @@ func StreamSessionRecording(stream proto.AuthService_StreamSessionRecordingClien
 			return trace.Wrap(err)
 		}
 
-		// Send file open event.
-		err = stream.Send(&proto.SessionChunk{
-			State: stateOpen,
-		})
+		// Send file open chunk.
+		openChunk := &proto.SessionChunk{
+			State:    stateOpen,
+			Type:     typeRaw,
+			Name:     header.Name,
+			FileSize: header.Size,
+		}
+		if strings.HasSuffix(header.Name, eventsSuffix) {
+			openChunk.Type = typeEvent
+		}
+		err = stream.Send(openChunk)
 		if err != nil {
 			return trail.FromGRPC(err)
 		}
 
-		fmt.Printf("--> hdr.Name: %v.\n", hdr.Name)
-
-		if !strings.Contains(hdr.Name, "gz") {
-			_, err = io.Copy(ioutil.Discard, tr)
-			if err != nil {
-				return trace.Wrap(err)
-			}
-			continue
-		}
-
-		zr, err := gzip.NewReader(tr)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		if strings.Contains(hdr.Name, "events.gz") {
-			scanner := bufio.NewScanner(zr)
-			for scanner.Scan() {
-				// Send chunk.
-				err = stream.Send(&proto.SessionChunk{
-					State:   stateChunk,
-					Type:    "events",
-					Payload: scanner.Bytes(),
-				})
-			}
-			err = scanner.Err()
-			if err != nil {
-				return trace.Wrap(err)
-			}
+		// Send content chunks. Raw chunks will be sent as-is, event chunks are
+		// un-compressed and sent so they can be validated and the archive
+		// re-constructed.
+		if strings.HasSuffix(header.Name, eventsSuffix) {
+			err = sendRawChunks(stream, tr)
 		} else {
-			_, err = io.Copy(ioutil.Discard, zr)
-			if err != nil {
-				return trace.Wrap(err)
-			}
+			err = sendEventChunks(tr, header, stream)
 		}
-		err = zr.Close()
 		if err != nil {
 			return trace.Wrap(err)
 		}
 
-		// Send file close event.
-		err = stream.Send(&proto.SessionChunk{
+		// Send file close chunk.
+		closeChunk := &proto.SessionChunk{
 			State:    stateClose,
-			Filename: hdr.Name,
-		})
+			Type:     typeRaw,
+			Name:     header.Name,
+			Filename: header.Size,
+		}
+		if strings.HasSuffix(header.Name, eventsSuffix) {
+			closeChunk.Type = typeEvent
+		}
+		err = stream.Send(closeChunk)
 		if err != nil {
 			return trace.Wrap(err)
 		}
 	}
 
-	// Send complete event.
-	err = stream.Send(&proto.SessionChunk{
-		State: stateComplete,
-	})
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	fmt.Printf("--> Client: Complete.\n")
+	//// Send complete event.
+	//err = stream.Send(&proto.SessionChunk{
+	//	State: stateComplete,
+	//})
+	//if err != nil {
+	//	return trace.Wrap(err)
+	//}
 
 	// All done, send a complete message and close the stream.
 	err = stream.CloseSend()
@@ -337,15 +326,61 @@ func StreamSessionRecording(stream proto.AuthService_StreamSessionRecordingClien
 	return nil
 }
 
-//func Log(w io.Writer, key, val string) {
-//	b := bufPool.Get().(*bytes.Buffer)
-//	b.Reset()
-//	// Replace this with time.Now() in a real logger.
-//	b.WriteString(timeNow().UTC().Format(time.RFC3339))
-//	b.WriteByte(' ')
-//	b.WriteString(key)
-//	b.WriteByte('=')
-//	b.WriteString(val)
-//	w.Write(b.Bytes())
-//	bufPool.Put(b)
-//}
+// sendRawChunks breaks and streams file in 1 MB chunks.
+func sendRawChunks(stream proto.AuthService_StreamSessionRecordingClient, reader io.Reader) error {
+	for {
+		// Read in one megabyte at a time until the end of the file.
+		data := make([]byte, 0, megabyte)
+		_, err := reader.Read(data)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return trace.Wrap(err)
+		}
+
+		// Send raw file chunk.
+		err = stream.Send(&proto.SessionChunk{
+			State: stateChunk,
+			Type:  typeRaw,
+			Data:  data,
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+	}
+
+	return nil
+}
+
+// sendEventChunks sends the events file one line at a time to allow the
+// server to validate each incoming event.
+func sendEventChunks(stream proto.AuthService_StreamSessionRecordingClient, reader io.Reader) error {
+	// Wrap the reader in a gzip reader to uncompress the archive.
+	zr, err := gzip.NewReader(reader)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	defer zr.Close()
+
+	// Loop over file line by line.
+	scanner := bufio.NewScanner(zr)
+	for scanner.Scan() {
+		// Send event chunk.
+		err = stream.Send(&proto.SessionChunk{
+			State:   stateChunk,
+			Type:    typeEvent,
+			Payload: scanner.Bytes(),
+		})
+	}
+	err = scanner.Err()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	return nil
+}
+
+const (
+	megabyte = 1000000
+)

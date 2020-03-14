@@ -118,12 +118,26 @@ message GetUsersRequest {
 
 // SessionChunk is a chunk of the session recording.
 message SessionChunk {
-    int64 State = 1 [(gogoproto.jsontag) = "state"];
+    // Namespace is the namespace the session is occuring in.
+    string Namespace = 1 [(gogoproto.jsontag) = "namespace"];
+
+    // SessionID is the UUID for the session.
     string SessionID = 2 [(gogoproto.jsontag) = "session_id"];
-    string Namespace = 3 [(gogoproto.jsontag) = "namespace"];
-    string Filename = 4 [(gogoproto.jsontag) = "filename"];
-    string Type = 5  [(gogoproto.jsontag) = "type"];
-    bytes Payload = 6 [(gogoproto.jsontag) = "payload"];
+
+    // State is the current state of chunk transmission.
+    int64 State = 3 [(gogoproto.jsontag) = "state"];
+
+    // Type is the type of chunk being transmitted.
+    int64 Type = 4 [(gogoproto.jsontag) = "type"];
+
+    // Name is the name of the file being transmitted.
+    string Name = 5 [(gogoproto.jsontag) = "name"];
+
+    // FileSize is the size of the file in bytes.
+    int64 FileSize = 6 [(gogoproto.jsontag) = "file_size"];
+
+    // Data is the raw data being transmitted.
+    bytes Data = 7 [(gogoproto.jsontag) = "payload"];
 }
 
 // AuthService is authentication/authorization service implementation
