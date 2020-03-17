@@ -428,6 +428,8 @@ type SSHConfig struct {
 	Labels                map[string]string
 	CmdLabels             services.CommandLabels
 	PermitUserEnvironment bool
+	Cert                  []byte
+	Key                   []byte
 
 	// PAM holds PAM configuration for Teleport.
 	PAM *pam.Config

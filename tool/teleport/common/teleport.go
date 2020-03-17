@@ -125,6 +125,12 @@ func Run(options Options, cfg *service.Config) (executedCommand string, conf *se
 		"Start Teleport in FedRAMP/FIPS 140-2 mode.").
 		Default("false").
 		BoolVar(&ccf.FIPS)
+	start.Flag("cert-path", "path to certificate used in teleport nodes connect").
+		Default("").
+		StringVar(&ccf.CertPath)
+	start.Flag("key-path", "path to key used in teleport nodes connect").
+		Default("").
+		StringVar(&ccf.KeyPath)
 
 	// define start's usage info (we use kingpin's "alias" field for this)
 	start.Alias(usageNotes + usageExamples)

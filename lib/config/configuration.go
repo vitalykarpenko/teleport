@@ -101,9 +101,12 @@ type CommandLineFlags struct {
 	// FIPS mode means Teleport starts in a FedRAMP/FIPS 140-2 compliant
 	// configuration.
 	FIPS bool
+
+	CertPath string
+	KeyPath  string
 }
 
-// readConfigFile reads /etc/teleport.yaml (or whatever is passed via --config flag)
+// ReadConfigFile reads /etc/teleport.yaml (or whatever is passed via --config flag)
 // and overrides values in 'cfg' structure
 func ReadConfigFile(cliConfigPath string) (*FileConfig, error) {
 	configFilePath := defaults.ConfigFilePath
@@ -213,6 +216,16 @@ func ApplyFileConfig(fc *FileConfig, cfg *service.Config) error {
 		}
 
 		cfg.Auth.StorageConfig = fc.Storage
+		// backend is specified, but no path is set, set a reasonable default
+		_, pathSet := cfg.Auth.StorageConfig.Params[defaults.BackendPath]
+		if cfg.Auth.StorageConfig.Type == lite.GetName() && !pathSet {
+			if cfg.Auth.StorageConfig.Params == nil {
+				cfg.Auth.StorageConfig.Params = make(backend.Params)
+			}
+			cfg.Auth.StorageConfig.Params[defaults.BackendPath] = filepath.Join(cfg.DataDir, defaults.BackendDir)
+		}
+	} else {
+		// Set a reasonable default.
 		cfg.Auth.StorageConfig.Params[defaults.BackendPath] = filepath.Join(cfg.DataDir, defaults.BackendDir)
 	}
 
@@ -994,6 +1007,22 @@ func Configure(clf *CommandLineFlags, cfg *service.Config) error {
 	// command line flag takes precedence over file config
 	if clf.PermitUserEnvironment {
 		cfg.SSH.PermitUserEnvironment = true
+	}
+
+	if clf.CertPath != "" {
+		cert, err := ioutil.ReadFile(clf.CertPath)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		cfg.SSH.Cert = cert
+	}
+
+	if clf.KeyPath != "" {
+		key, err := ioutil.ReadFile(clf.KeyPath)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		cfg.SSH.Key = key
 	}
 
 	return nil
