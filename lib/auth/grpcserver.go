@@ -199,7 +199,8 @@ func (g *GRPCServer) StreamSessionRecording(stream proto.AuthService_StreamSessi
 		return trail.ToGRPC(err)
 	}
 
-	fmt.Printf("--> GRPCServer: New Stream!.\n")
+	fmt.Printf("--> GRPCServer: New Stream.\n")
+
 	// Create a stream building state machine. This state machine will validate
 	// session events, construct the session archive, and upload it to the
 	// storage layer.
@@ -212,9 +213,7 @@ func (g *GRPCServer) StreamSessionRecording(stream proto.AuthService_StreamSessi
 	for {
 		chunk, err := stream.Recv()
 		if err == io.EOF {
-			fmt.Printf("--> GRPCServer: StreamSessionRecording: io.EOF.\n")
-			fmt.Printf("--> GRPCServer: StreamSessionRecording: io.EOF.\n")
-			fmt.Printf("--> GRPCServer: StreamSessionRecording: io.EOF.\n")
+			fmt.Printf("--> GRPCServer: Stream complete.\n")
 			return nil
 		}
 		if err != nil {
@@ -223,12 +222,6 @@ func (g *GRPCServer) StreamSessionRecording(stream proto.AuthService_StreamSessi
 
 		// Send the stream chunk to the state machine to be processed.
 		err = sb.Process(chunk)
-		if err != nil && strings.Contains(err.Error(), "blahblah") {
-			fmt.Printf("--> GRPCServer: StreamSessionRecording: complete.\n")
-			fmt.Printf("--> GRPCServer: StreamSessionRecording: complete.\n")
-			fmt.Printf("--> GRPCServer: StreamSessionRecording: complete.\n")
-			return nil
-		}
 		if err != nil {
 			return trail.ToGRPC(err)
 		}

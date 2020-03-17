@@ -150,8 +150,6 @@ func openFileForTar(filename string) (*tar.Header, io.ReadCloser, error) {
 		return nil, nil, trace.ConvertSystemError(err)
 	}
 
-	fmt.Printf("--> openFileForTar: %#v.\n", header)
-
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, nil, trace.ConvertSystemError(err)

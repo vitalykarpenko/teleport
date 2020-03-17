@@ -22,9 +22,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,17 +39,23 @@ import (
 )
 
 const (
-	stateInit     = 0
-	stateOpen     = 1
-	stateChunk    = 2
-	stateClose    = 3
-	stateComplete = 4
+	stateInit = 0
+
+	stateOpenRaw  = 1
+	stateChunkRaw = 2
+	stateCloseRaw = 3
+
+	stateOpenEvents  = 4
+	stateChunkEvents = 5
+	stateCloseEvents = 6
+
+	stateComplete = 7
 )
 
-const (
-	typeRaw   = 0
-	typeEvent = 1
-)
+//const (
+//	typeRaw   = 0
+//	typeEvent = 1
+//)
 
 const (
 	concurrentStreams = 2
@@ -132,12 +138,18 @@ func (s *StreamManager) releaseSemaphore() error {
 }
 
 func (s *Stream) Process(chunk *proto.SessionChunk) error {
-	var err error
+	// Check that the state transitions are sane.
+	err := s.checkTransition(chunk)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// TODO: Is it safe to transition the state without knowing if it was successful?
+	s.setState(chunk.GetState())
 
 	switch chunk.GetState() {
 	case stateInit:
 		s.sessionID = chunk.GetSessionID()
-		s.manager.Debugf("Changing state to INIT for stream %v.", s.sessionID)
+		s.manager.log.Debugf("Changing state to INIT for stream %v.", s.sessionID)
 
 		// Create a streaming tar reader/writer to reduce how much of the archive
 		// is buffered in memory.
@@ -147,46 +159,100 @@ func (s *Stream) Process(chunk *proto.SessionChunk) error {
 		// Kick off the upload in a goroutine so it can be uploaded as it
 		// is processed.
 		go s.upload(chunk.GetNamespace(), session.ID(chunk.GetSessionID()), pr)
-	case stateOpen:
-		s.manager.Debugf("Changing state to OPEN for stream %v.", s.sessionID)
+	case stateComplete:
+		s.manager.log.Debugf("Changing state to COMPLETE for stream %v.", s.sessionID)
 
-		//// Get a buffer from the pool.
-		s.zipBuffer = s.manager.pool.Get().(*bytes.Buffer)
-
-		//s.zipWriter = gzip.NewWriter(s.zipBuffer)
-		s.zipWriter, err = gzip.NewWriterLevel(s.zipBuffer, gzip.BestSpeed)
-		//s.zipWriter, err = gzip.NewWriterLevel(&s.zipBuffer, gzip.BestSpeed)
+		err = s.tarWriter.Close()
 		if err != nil {
 			return trace.Wrap(err)
 		}
-	case stateChunk:
-		//fmt.Printf("--> Process: stateChunk.\n")
-
-		// If the chunk is an events chunk, then validate it.
-		switch {
-		case strings.Contains(chunk.GetType(), "events"):
-			// TODO: Validate event.
-			//fmt.Printf("--> Process: stateChunk: %v.\n", string(chunk.GetPayload()))
-
-			_, err = s.zipWriter.Write(append(chunk.GetPayload(), '\n'))
-			if err != nil {
-				return trace.Wrap(err)
-			}
-		default:
-			_, err = s.zipWriter.Write(chunk.GetPayload())
-			if err != nil {
-				return trace.Wrap(err)
-			}
+	// Raw events are directly streamed into the tar archive.
+	case stateOpenRaw, stateCloseRaw, stateChunkRaw:
+		err = s.processRaw(chunk)
+		if err != nil {
+			return trace.Wrap(err)
 		}
-	case stateClose:
-		//fmt.Printf("--> Process: stateClose. Filename: %v, Len: %v.\n", chunk.GetFilename(), s.zipBuffer.Len())
+	// Events are aggregated into a gzip archive in memory first, then streamed
+	// to the tar archive.
+	case stateOpenEvents, stateCloseEvents, stateChunkEvents:
+		err = s.processEvents(chunk)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+	// Reject all unknown event types.
+	default:
+		err = trace.BadParameter("unknown event type %v", chunk.GetState())
+	}
+	return nil
+}
 
+// processRaw takes chunks and directly streams them into the tar archive.
+func (s *Stream) processRaw(chunk *proto.SessionChunk) error {
+	var err error
+
+	switch chunk.GetState() {
+	// Open the tar archive by writing the header. Since this is a raw stream
+	// the size of the content to be written is known.
+	case stateOpenRaw:
+		s.manager.log.Debugf("Changing state to OPEN RAW for stream %v.", s.sessionID)
+
+		err := s.tarWriter.WriteHeader(&tar.Header{
+			Name: chunk.GetName(),
+			Mode: 0600,
+			Size: chunk.GetFileSize(),
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+	// Close is a NOP because writing a header indicates the size of file and
+	// where the next file starts.
+	case stateCloseRaw:
+		s.manager.log.Debugf("Changing state to CLOSE RAW for stream %v.", s.sessionID)
+	// Chunk can be written directly to the tar archive.
+	case stateChunkRaw:
+		s.manager.log.Debugf("Changing state to CHUNK RAW for stream %v.", s.sessionID)
+
+		fmt.Printf("--> Raw chunk: %v.\n", hex.Dump(chunk.GetData()))
+
+		_, err = s.tarWriter.Write(chunk.GetData())
+		if err != nil {
+			return trace.Wrap(err)
+		}
+	}
+	return nil
+}
+
+// processEvents takes chunks, validates them, and then buffers them in a
+// gzip stream until complete then writes them to the tar archive.
+func (s *Stream) processEvents(chunk *proto.SessionChunk) error {
+	var err error
+
+	switch chunk.GetState() {
+	case stateOpenEvents:
+		s.manager.log.Debugf("Changing state to OPEN EVENTS for stream %v.", s.sessionID)
+
+		// Get a buffer from the pool.
+		s.zipBuffer = s.manager.pool.Get().(*bytes.Buffer)
+
+		s.zipWriter, err = gzip.NewWriterLevel(s.zipBuffer, gzip.BestSpeed)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+	case stateCloseEvents:
+		s.manager.log.Debugf("Changing state to CLOSE EVENTS for stream %v.", s.sessionID)
+
+		// Close zip file and after writing it to the tar archive, release
+		// any resources.
 		err = s.zipWriter.Close()
 		if err != nil {
 			return trace.Wrap(err)
 		}
+		defer s.zipBuffer.Reset()
+		defer s.manager.pool.Put(s.zipBuffer)
+
+		// Copy the zip archive into the tar stream.
 		err := s.tarWriter.WriteHeader(&tar.Header{
-			Name: chunk.GetFilename(),
+			Name: chunk.GetName(),
 			Mode: 0600,
 			Size: int64(s.zipBuffer.Len()),
 		})
@@ -197,30 +263,27 @@ func (s *Stream) Process(chunk *proto.SessionChunk) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
+	case stateChunkEvents:
+		s.manager.log.Debugf("Changing state to CHUNK EVENTS for stream %v.", s.sessionID)
 
-		s.zipBuffer.Reset()
-		s.manager.pool.Put(s.zipBuffer)
-
-		//err = s.manager.releaseSemaphore()
-		//if err != nil {
-		//	return trace.Wrap(err)
-		//}
-	case stateComplete:
-		//fmt.Printf("--> Process: stateComplete.\n")
-
-		err = s.tarWriter.Close()
+		_, err = s.zipWriter.Write(append(chunk.GetData(), '\n'))
 		if err != nil {
 			return trace.Wrap(err)
 		}
-
-		return fmt.Errorf("blahblah")
-
 	}
 	return nil
 }
 
 func (s *Stream) GetState() int64 {
 	return atomic.LoadInt64(&s.state)
+}
+
+func (s *Stream) setState(state int64) {
+	atomic.StoreInt64(&s.state, state)
+}
+
+func (s *Stream) checkTransition(chunk *proto.SessionChunk) error {
+	return nil
 }
 
 func (s *Stream) Reader() io.Reader {
@@ -267,56 +330,41 @@ func StreamSessionRecording(stream proto.AuthService_StreamSessionRecordingClien
 			return trace.Wrap(err)
 		}
 
+		// All files that end with an events suffix are opened then sent.
+		isEvents := strings.HasSuffix(header.Name, eventsSuffix)
+
 		// Send file open chunk.
-		openChunk := &proto.SessionChunk{
-			State:    stateOpen,
-			Type:     typeRaw,
-			Name:     header.Name,
-			FileSize: header.Size,
-		}
-		if strings.HasSuffix(header.Name, eventsSuffix) {
-			openChunk.Type = typeEvent
-		}
-		err = stream.Send(openChunk)
+		err = sendOpenEvent(stream, header, isEvents)
 		if err != nil {
-			return trail.FromGRPC(err)
+			return trace.Wrap(err)
 		}
 
 		// Send content chunks. Raw chunks will be sent as-is, event chunks are
 		// un-compressed and sent so they can be validated and the archive
 		// re-constructed.
-		if strings.HasSuffix(header.Name, eventsSuffix) {
+		if !isEvents {
 			err = sendRawChunks(stream, tr)
 		} else {
-			err = sendEventChunks(tr, header, stream)
+			err = sendEventChunks(stream, tr)
 		}
 		if err != nil {
 			return trace.Wrap(err)
 		}
 
 		// Send file close chunk.
-		closeChunk := &proto.SessionChunk{
-			State:    stateClose,
-			Type:     typeRaw,
-			Name:     header.Name,
-			Filename: header.Size,
-		}
-		if strings.HasSuffix(header.Name, eventsSuffix) {
-			closeChunk.Type = typeEvent
-		}
-		err = stream.Send(closeChunk)
+		err = sendCloseEvent(stream, header, isEvents)
 		if err != nil {
 			return trace.Wrap(err)
 		}
 	}
 
-	//// Send complete event.
-	//err = stream.Send(&proto.SessionChunk{
-	//	State: stateComplete,
-	//})
-	//if err != nil {
-	//	return trace.Wrap(err)
-	//}
+	// Send complete event.
+	err = stream.Send(&proto.SessionChunk{
+		State: stateComplete,
+	})
+	if err != nil {
+		return trace.Wrap(err)
+	}
 
 	// All done, send a complete message and close the stream.
 	err = stream.CloseSend()
@@ -326,27 +374,73 @@ func StreamSessionRecording(stream proto.AuthService_StreamSessionRecordingClien
 	return nil
 }
 
+// sendOpenEvent sends either a stateOpenRaw or stateOpenEvents chunk.
+func sendOpenEvent(stream proto.AuthService_StreamSessionRecordingClient, header *tar.Header, isEvents bool) error {
+	chunkState := stateOpenRaw
+	if isEvents {
+		chunkState = stateOpenEvents
+	}
+
+	err := stream.Send(&proto.SessionChunk{
+		State:    int64(chunkState),
+		Name:     header.Name,
+		FileSize: header.Size,
+	})
+	if err != nil {
+		return trail.FromGRPC(err)
+	}
+
+	return nil
+}
+
+// sendCloseEvent sends either a stateCloseRaw or stateCloseEvents chunk.
+func sendCloseEvent(stream proto.AuthService_StreamSessionRecordingClient, header *tar.Header, isEvents bool) error {
+	chunkState := stateCloseRaw
+	if isEvents {
+		chunkState = stateCloseEvents
+	}
+
+	err := stream.Send(&proto.SessionChunk{
+		State:    int64(chunkState),
+		Name:     header.Name,
+		FileSize: header.Size,
+	})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	return nil
+}
+
 // sendRawChunks breaks and streams file in 1 MB chunks.
 func sendRawChunks(stream proto.AuthService_StreamSessionRecordingClient, reader io.Reader) error {
+	var fileDone bool
+
 	for {
 		// Read in one megabyte at a time until the end of the file.
-		data := make([]byte, 0, megabyte)
-		_, err := reader.Read(data)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
+		data := make([]byte, 4096)
+		n, err := reader.Read(data)
+		if err != nil && err != io.EOF {
 			return trace.Wrap(err)
+		}
+		if err == io.EOF {
+			fileDone = true
 		}
 
 		// Send raw file chunk.
-		err = stream.Send(&proto.SessionChunk{
-			State: stateChunk,
-			Type:  typeRaw,
-			Data:  data,
-		})
-		if err != nil {
-			return trace.Wrap(err)
+		if len(data) > 0 {
+			err = stream.Send(&proto.SessionChunk{
+				State: stateChunkRaw,
+				Data:  data[:n],
+			})
+			if err != nil {
+				return trace.Wrap(err)
+			}
+		}
+
+		// Exit out if no more data to be read or the file is done (got io.EOF).
+		if len(data) == 0 || fileDone {
+			break
 		}
 	}
 
@@ -368,9 +462,8 @@ func sendEventChunks(stream proto.AuthService_StreamSessionRecordingClient, read
 	for scanner.Scan() {
 		// Send event chunk.
 		err = stream.Send(&proto.SessionChunk{
-			State:   stateChunk,
-			Type:    typeEvent,
-			Payload: scanner.Bytes(),
+			State: stateChunkEvents,
+			Data:  scanner.Bytes(),
 		})
 	}
 	err = scanner.Err()
@@ -380,7 +473,3 @@ func sendEventChunks(stream proto.AuthService_StreamSessionRecordingClient, read
 
 	return nil
 }
-
-const (
-	megabyte = 1000000
-)
