@@ -87,6 +87,7 @@ type TLSServer struct {
 
 // NewTLSServer returns new unstarted TLS server
 func NewTLSServer(cfg TLSServerConfig) (*TLSServer, error) {
+	log.Errorf("$$$ NewTLSServer")
 	if err := cfg.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -133,6 +134,12 @@ func (t *TLSServer) Serve(listener net.Listener) error {
 // and server's GetConfigForClient reloads the list of trusted
 // local and remote certificate authorities
 func (t *TLSServer) GetConfigForClient(info *tls.ClientHelloInfo) (*tls.Config, error) {
+
+	// if _, err := os.Stat("debug"); !os.IsNotExist(err) {
+	// 	panic("!GetConfigForClient")
+	// }
+	log.Errorf("!!! GetConfigForClient: %#v", *info)
+
 	var clusterName string
 	var err error
 	if info.ServerName != "" {
@@ -161,8 +168,9 @@ func (t *TLSServer) GetConfigForClient(info *tls.ClientHelloInfo) (*tls.Config, 
 	}
 	tlsCopy := t.TLS.Clone()
 	tlsCopy.ClientCAs = pool
-	for _, cert := range tlsCopy.Certificates {
+	for idx, cert := range tlsCopy.Certificates {
 		t.Debugf("Server certificate %v.", TLSCertInfo(&cert))
+		t.Errorf("!!! Server certificate %d", idx)
 	}
 	return tlsCopy, nil
 }
@@ -318,6 +326,7 @@ func (a *AuthMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ClientCertPool returns trusted x509 cerificate authority pool
 func ClientCertPool(client AccessCache, clusterName string) (*x509.CertPool, error) {
+	log.Errorf("!!! returns trusted x509 cerificate authority pool")
 	pool := x509.NewCertPool()
 	var authorities []services.CertAuthority
 	if clusterName == "" {
@@ -348,14 +357,15 @@ func ClientCertPool(client AccessCache, clusterName string) (*x509.CertPool, err
 		authorities = append(authorities, userCA)
 	}
 
-	for _, auth := range authorities {
-		for _, keyPair := range auth.GetTLSKeyPairs() {
+	for idx, auth := range authorities {
+		for idx2, keyPair := range auth.GetTLSKeyPairs() {
 			cert, err := tlsca.ParseCertificatePEM(keyPair.Cert)
 			if err != nil {
 				return nil, trace.Wrap(err)
 			}
 			log.Debugf("ClientCertPool -> %v", CertInfo(cert))
 			pool.AddCert(cert)
+			log.Errorf("ClientCertPool -> %d, %d", idx, idx2)
 		}
 	}
 	return pool, nil

@@ -1,0 +1,10 @@
+teleport:
+  auth_servers:
+    - teleport.cluster.local:3025
+  data_dir: /home/dlahuta/go/src/github.com/gravitational/teleport/1-node-data
+proxy_service:
+  enabled: "no"
+auth_service:
+  enabled: "no"
+ssh_service:
+  enabled: "yes"

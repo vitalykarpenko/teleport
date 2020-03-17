@@ -1,0 +1,30 @@
+teleport:
+  data_dir: /home/dlahuta/go/src/github.com/gravitational/teleport/1-auth-data
+auth_service:
+  enabled: "yes"
+  tokens:
+    - "proxy,node:hello"
+  authentication:
+    second_factor: off
+  public_addr: teleport.cluster.local:3025
+  listen_addr: 0.0.0.0:3025
+  authorities:
+  - type: host
+    domain_name: teleport.example.com
+    # checking_keys:
+    #   - checking key 1
+    #checking_key_files: /home/dlahuta/go/src/github.com/gravitational/teleport/build.examples/auth/ibClient.key
+    # signing_keys:
+    #   - signing key 1
+    #signing_key_files: /home/dlahuta/go/src/github.com/gravitational/teleport/build.examples/auth/ibClient.pem
+  # reverse_tunnels:
+  #     - domain_name: tunnel.example.com
+  #         addresses: ["com-1", "com-2"]
+  #     - domain_name: tunnel.example.org
+  #         addresses: ["org-1"]
+ssh_service:
+  enabled: "no"
+proxy_service:
+  enabled: "yes"
+  https_key_file: /home/dlahuta/go/src/github.com/gravitational/teleport/build.examples/auth/CA.key
+  https_cert_file: /home/dlahuta/go/src/github.com/gravitational/teleport/build.examples/auth/CA.pem

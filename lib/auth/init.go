@@ -23,7 +23,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io/ioutil"
 	"net"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -142,6 +144,8 @@ type InitConfig struct {
 
 // Init instantiates and configures an instance of AuthServer
 func Init(cfg InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
+	log.Error("!!! Init CA")
+
 	if cfg.DataDir == "" {
 		return nil, trace.BadParameter("DataDir: data dir can not be empty")
 	}
@@ -157,6 +161,7 @@ func Init(cfg InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
 	defer backend.ReleaseLock(context.TODO(), cfg.Backend, domainName)
 
 	// check that user CA and host CA are present and set the certs if needed
+	log.Error("!!! create NewAuthServer - asrv, user CA and host CA")
 	asrv, err := NewAuthServer(&cfg, opts...)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -194,7 +199,10 @@ func Init(cfg InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
 		}
 		log.Infof("Created role: %v.", role)
 	}
+
+	log.Errorf("!!! asrv.Trust.CreateCertAuthority if exist in cfg")
 	for i := range cfg.Authorities {
+		log.Errorf("*** cfg.Authorities[%d] [%v]", i, cfg.Authorities[i])
 		ca := cfg.Authorities[i]
 		ca, err = services.GetCertAuthorityMarshaler().GenerateCertAuthority(ca)
 		if err != nil {
@@ -293,6 +301,7 @@ func Init(cfg InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
 		log.Infof("Created default admin role: %q.", defaultRole.GetName())
 	}
 
+	log.Errorf("!!! generate a user certificate authority if it doesn't exist")
 	// generate a user certificate authority if it doesn't exist
 	userCA, err := asrv.GetCertAuthority(services.CertAuthID{DomainName: cfg.ClusterName.GetClusterName(), Type: services.UserCA}, true)
 	if err != nil {
@@ -348,6 +357,7 @@ func Init(cfg InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
 		}
 	}
 
+	log.Errorf("!!! asrv.GetCertAuthority host")
 	// generate a host certificate authority if it doesn't exist
 	hostCA, err := asrv.GetCertAuthority(services.CertAuthID{DomainName: cfg.ClusterName.GetClusterName(), Type: services.HostCA}, true)
 	if err != nil {
@@ -356,11 +366,13 @@ func Init(cfg InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
 		}
 
 		log.Infof("First start: generating host certificate authority.")
+
 		priv, pub, err := asrv.GenerateKeyPair("")
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
 
+		///generate cert
 		keyPEM, certPEM, err := tlsca.GenerateSelfSignedCA(pkix.Name{
 			CommonName:   cfg.ClusterName.GetClusterName(),
 			Organization: []string{cfg.ClusterName.GetClusterName()},
@@ -368,6 +380,28 @@ func Init(cfg InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
+		path := filepath.Join(cfg.DataDir, "CA.key")
+		err = ioutil.WriteFile(path, keyPEM, 0777)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		path = filepath.Join(cfg.DataDir, "CA.crt")
+		err = ioutil.WriteFile(path, certPEM, 0777)
+		if err != nil {
+			fmt.Println(err)
+		}
+		path = filepath.Join(cfg.DataDir, "publ.key")
+		err = ioutil.WriteFile(path, pub, 0777)
+		if err != nil {
+			fmt.Println(err)
+		}
+		path = filepath.Join(cfg.DataDir, "priv.key")
+		err = ioutil.WriteFile(path, priv, 0777)
+		if err != nil {
+			fmt.Println(err)
+		}
+
 		hostCA = &services.CertAuthorityV2{
 			Kind:    services.KindCertAuthority,
 			Version: services.V2,

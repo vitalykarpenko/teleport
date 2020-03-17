@@ -193,6 +193,7 @@ func (ca *CertAuthority) GenerateCertificate(req CertificateRequest) ([]byte, er
 		"org":         req.Subject.Organization,
 		"org_unit":    req.Subject.OrganizationalUnit,
 		"locality":    req.Subject.Locality,
+		"CertCA":      string(ca.Cert.Signature),
 	}).Infof("Generating TLS certificate %v.", req)
 
 	template := &x509.Certificate{
@@ -222,6 +223,6 @@ func (ca *CertAuthority) GenerateCertificate(req CertificateRequest) ([]byte, er
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-
+	log.Errorf("!!! certBytes %s", string(certBytes))
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes}), nil
 }

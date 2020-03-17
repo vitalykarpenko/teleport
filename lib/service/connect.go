@@ -85,6 +85,7 @@ func (process *TeleportProcess) connectToAuthService(role teleport.Role) (*Conne
 }
 
 func (process *TeleportProcess) connect(role teleport.Role) (conn *Connector, err error) {
+	log.Errorf("!!! connect %v")
 	state, err := process.storage.GetState(role)
 	if err != nil {
 		if !trace.IsNotFound(err) {
@@ -124,6 +125,8 @@ func (process *TeleportProcess) connect(role teleport.Role) (conn *Connector, er
 			}, nil
 		}
 		log.Infof("Connecting to the cluster %v with TLS client certificate.", identity.ClusterName)
+
+		log.Errorf("!Identity: cert%v tlsca%v tls%v", string(*&identity.CertBytes), string(*&identity.TLSCACertsBytes[0]), string(*&identity.TLSCertBytes))
 		client, err := process.newClient(process.Config.AuthServers, identity)
 		if err != nil {
 			return nil, trace.Wrap(err)
@@ -340,10 +343,6 @@ func (process *TeleportProcess) firstTimeConnect(role teleport.Role) (*Connector
 			return nil, trace.Wrap(err)
 		}
 	} else {
-		// Auth server is remote, so we need a provisioning token.
-		if process.Config.Token == "" {
-			return nil, trace.BadParameter("%v must join a cluster and needs a provisioning token", role)
-		}
 		process.Infof("Joining the cluster with a secure token.")
 		const reason = "first-time-connect"
 		keyPair, err := process.generateKeyPair(role, reason)
@@ -351,6 +350,8 @@ func (process *TeleportProcess) firstTimeConnect(role teleport.Role) (*Connector
 			return nil, trace.Wrap(err)
 		}
 
+		log.Errorf("keyPair.PrivateKey %v", string(keyPair.PrivateKey))
+		log.Errorf("keyPair.PublicTLSKey %v", string(keyPair.PublicTLSKey))
 		identity, err = auth.Register(auth.RegisterParams{
 			DataDir:              process.Config.DataDir,
 			Token:                process.Config.Token,
@@ -373,6 +374,11 @@ func (process *TeleportProcess) firstTimeConnect(role teleport.Role) (*Connector
 	}
 
 	log.Infof("%v has obtained credentials to connect to cluster.", role)
+
+	log.Errorf("identity.TLSCertBytes %v", string(identity.TLSCertBytes))
+	log.Errorf("identity.KeyBytes %v", string(identity.KeyBytes))
+	log.Errorf("identity.TLSCACertsBytes %v", string(identity.TLSCACertsBytes[0]))
+
 	var connector *Connector
 	if role == teleport.RoleAdmin || role == teleport.RoleAuth {
 		connector = &Connector{

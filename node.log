@@ -1,0 +1,56 @@
+DEBU [SQLITE]    Connected to: file:/home/dlahuta/go/src/github.com/gravitational/teleport/1-node-data/sqlite.db?_busy_timeout=10000&_sync=OFF, poll stream period: 1s lite/lite.go:173
+DEBU [SQLITE]    Synchronous: 0, busy timeout: 10000 lite/lite.go:220
+DEBU [SQLITE]    Connected to: file:/home/dlahuta/go/src/github.com/gravitational/teleport/1-node-data/sqlite.db?_busy_timeout=10000&_sync=OFF, poll stream period: 1s lite/lite.go:173
+DEBU [SQLITE]    Synchronous: 0, busy timeout: 10000 lite/lite.go:220
+ERRO [AUTH]      *** NewCAService local/trust.go:27
+ERRO             !! OnStart common/teleport.go:192
+ERRO [PROC]      !!! NewTeleport service/service.go:392
+INFO [PROC]      Generating new host UUID: e791c83e-9f58-45d1-bb29-6b0f074b8377. service/service.go:552
+DEBU [SQLITE]    Connected to: file:/home/dlahuta/go/src/github.com/gravitational/teleport/1-node-data/proc/sqlite.db?_busy_timeout=10000&_sync=OFF, poll stream period: 1s lite/lite.go:173
+DEBU [SQLITE]    Synchronous: 0, busy timeout: 10000 lite/lite.go:220
+DEBU [KEYGEN]    SSH cert authority started with no keys pre-compute. native/native.go:107
+DEBU [PROC]      Adding service to supervisor. service:register.node sync/mutex.go:74
+DEBU [PROC]      Adding service to supervisor. service:ssh.node sync/mutex.go:74
+DEBU [PROC]      Adding service to supervisor. service:ssh.shutdown sync/mutex.go:74
+DEBU [PROC]      Adding service to supervisor. service:common.rotate sync/mutex.go:74
+DEBU [PROC:1]    No signal pipe to import, must be first Teleport process. service/service.go:703
+DEBU [PROC:1]    Service has started. service:register.node service/supervisor.go:242
+ERRO [PROC]      !!! connect %!v(MISSING) service/connect.go:89
+INFO [PROC:1]    Joining the cluster with a secure token. service/connect.go:348
+DEBU [PROC:1]    Generating new key pair for Node first-time-connect. service/connect.go:259
+DEBU [PROC:1]    Service has started. service:common.rotate service/supervisor.go:242
+DEBU [PROC:1]    Service has started. service:ssh.node service/supervisor.go:242
+DEBU [PROC:1]    Service has started. service:ssh.shutdown service/supervisor.go:242
+ERRO [PROC]      "keyPair.PrivateKey -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEApUxqoWqt0C7hTcNf9wzftuOlQNczryelmyT+gfVnxQ6tvI5E\nfYry1zINYSRWAAVsxBKG6ZbqhYHuxMbJVV8xM4qecFOIOCZ3M6OKZOQDmR+5p4Kl\n+q4d9WSf+hdXHxswj+jFSZJE+tNkqLz7l39BGHASvvW/ZwLKH/G6J6BJODuX3LWi\n6E14tlfZBAvnWn8DcB1o2I9lnsAF0YW1u/zh3GXDeLra4fO8A0Frc0KTqBIgNiSV\nRm/+DZUg2eGKB3+fHYJ4AbCjgj0a54s4vKU3yDHvwTjtqLp2X7NHnvUHrUTYDkMr\nbP4zOAiJajjkQf1o4mbmVmdYTt+oiH/aWoMMlQIDAQABAoIBAQCIOO6TMfAl5cyF\nImKenTxsYzSXuAH+8eR3c8hOX2hyLEOfZXsqHu07zSLbkG9TOyVEfKQ0Msv41Hhq\nMAxRz84jVLR3i09yPrjzlG4D8SjJ8ywz0OZqLT3BMnjoSH3iw6yEnGah1+oC710/\n9eY9FoEV256HQszG3rSmGLa5200cCiVPDuFacNNbW2TB+vpJmNYqCHE7It7zJqrs\n0KYxLgXdGuVB45Fl6J+QN5XIam71PnURlBG/c4yiyD8iulE+taAAwl5Jrqi200Mu\nlZGVUOWMJeqPrWGeWj8+Frrzfaogo9IDYWJfk1UnqFqxkZ8GoMZ2BBp68kGYpHSu\nbFGOdyKNAoGBANOU0jojmQ1B4wCz//o+DudJIl8w9QdJULVbdeUt7/I9/HVOqfM2\nYilEWFTgN2cRRrBaarguTPslMSpfmFydEFSFmk+EjHTCbNhpgxNtsXo2c6EbFmwt\nArv3gIK1mjzqzFv6yAksep5nwvb8dyfCFFTm1he5tXyinmTe3AfCmbcvAoGBAMgA\nLnNAaqhX7FCcYUgvv3ZuE7Zv+D9fTOu9W34gwXdgB635Vd6wwkASgOnd/tbMJnw0\nqTv+v4iZ69CerBwa9yAhjto/CLU+OmWMuhK+GNEp/3WPp0oUSbEudgsJvpuTpRlG\njouJNkYj0NNJLVXLEDXuYstFKwcShOWqTup+Rkd7AoGATyRBpqGeJEla4e5yd2Yz\nKOxAQR8M6FbSK6Q0ay9Nq2zoO/DavTDAcvMvnz/nOVRK/rgzZwVaoi59P35WfX36\nl8MJv2izKRF4qVJ+Rwwm8LHheoepUXlcpnajyUComtSw8E7T+Cp9CzeAw+YXo/WC\nqWdW+bTrX91sJgr+fqCZ4t0CgYA5jWvQeIn4tYxoSgfoiOz0vIpppmDug5MUB2KL\nsgtaOcUb+DMQqRbM70YvhlVuJEMy3MiSXiVpvrlQSEjIsa3Jjj6YaSktVqHhVRS6\njf+AOTCs+NCwDZSDKxaG6J/0DxGka1xbpPl8R5QxKM6l8JBSpK3DRr0yBM8/c7nP\n2tSIfwKBgGLUNY+ovKcsW+HcJRyNRwB7mMColmxlriYS2WzGsW8bxH4rj1d6UE5V\nOAKdxlLgeAGho0aN5BpOI5Nxa40MVIEqXJ4GPOuZsMcY+BcY5Uric/TBBQR2fEO+\nvyDpsn4OpDC2YRI/ftsSb/sD9TffL1yzS8mhr0RGiPUWeVOSLWKO\n-----END RSA PRIVATE KEY-----\n" service/connect.go:354
+ERRO [PROC]      "keyPair.PublicTLSKey -----BEGIN RSA PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApUxqoWqt0C7hTcNf9wzf\ntuOlQNczryelmyT+gfVnxQ6tvI5EfYry1zINYSRWAAVsxBKG6ZbqhYHuxMbJVV8x\nM4qecFOIOCZ3M6OKZOQDmR+5p4Kl+q4d9WSf+hdXHxswj+jFSZJE+tNkqLz7l39B\nGHASvvW/ZwLKH/G6J6BJODuX3LWi6E14tlfZBAvnWn8DcB1o2I9lnsAF0YW1u/zh\n3GXDeLra4fO8A0Frc0KTqBIgNiSVRm/+DZUg2eGKB3+fHYJ4AbCjgj0a54s4vKU3\nyDHvwTjtqLp2X7NHnvUHrUTYDkMrbP4zOAiJajjkQf1o4mbmVmdYTt+oiH/aWoMM\nlQIDAQAB\n-----END RSA PUBLIC KEY-----\n" service/connect.go:367
+ERRO [AUTH]      !!! Register - registerThroughAuth auth/register.go:115
+ERRO [AUTH]      Attempting to register through auth server. *Cert* auth/register.go:177
+WARN [AUTH]      Joining cluster without validating the identity of the Auth Server. This may open you up to a Man-In-The-Middle (MITM) attack if an attacker can gain privileged network access. To remedy this, use the CA pin value provided when join token was generated to validate the identity of the Auth Server. auth/register.go:236
+ERRO [AUTH]      *** RegisterUsingCert in registerThroughAuth auth/register.go:197
+ERRO [AUTH]      !!! RegisterUsingCert client auth/clt.go:644
+ERRO [AUTH]      !!! 1- POSTJSON client auth/clt.go:645
+ERRO [AUTH]      !!! 2-POSTJSON client auth/clt.go:647
+ERRO [AUTH]      !!! 4-POSTJSON client auth/clt.go:657
+DEBU [PROC:1]    Deleted generated key pair Node first-time-connect. service/connect.go:245
+INFO [PROC]      Node has obtained credentials to connect to cluster. service/connect.go:378
+DEBU [PROC:1]    Service is completed and removed. service:register.node service/supervisor.go:219
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x60 pc=0x1ce357b]
+
+goroutine 161 [running]:
+github.com/gravitational/teleport/lib/service.(*TeleportProcess).firstTimeConnect(0xc0000383c0, 0x23351f3, 0x4, 0x0, 0x2793d80, 0xc000185c00)
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/connect.go:378 +0x2eb
+github.com/gravitational/teleport/lib/service.(*TeleportProcess).connect(0xc0000383c0, 0x23351f3, 0x4, 0x0, 0xc0005a7b68, 0xc0005a7c30)
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/connect.go:96 +0xff
+github.com/gravitational/teleport/lib/service.(*TeleportProcess).connectToAuthService(0xc0000383c0, 0x23351f3, 0x4, 0x0, 0x0, 0x4efbe1)
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/connect.go:76 +0x43
+github.com/gravitational/teleport/lib/service.(*TeleportProcess).reconnectToAuthService(0xc0000383c0, 0x23351f3, 0x4, 0xc00004e190, 0xc000105b60, 0x0)
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/connect.go:46 +0x66
+github.com/gravitational/teleport/lib/service.(*TeleportProcess).registerWithAuthServer.func1(0x1f338c0, 0xc0003c1ef0)
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/service.go:1610 +0x7f
+github.com/gravitational/teleport/lib/service.(*LocalService).Serve(0xc0003367e0, 0x2350222, 0x14)
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/supervisor.go:452 +0x2a
+github.com/gravitational/teleport/lib/service.(*LocalSupervisor).serve.func1(0xc000355040, 0x27f5280, 0xc0003367e0)
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/supervisor.go:242 +0x33a
+created by github.com/gravitational/teleport/lib/service.(*LocalSupervisor).serve
+	/home/dlahuta/go/src/github.com/gravitational/teleport/lib/service/supervisor.go:237 +0x6e

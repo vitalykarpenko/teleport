@@ -3,11 +3,17 @@ package local
 import (
 	"context"
 
+	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/backend"
 	"github.com/gravitational/teleport/lib/services"
+	"github.com/sirupsen/logrus"
 
 	"github.com/gravitational/trace"
 )
+
+var log = logrus.WithFields(logrus.Fields{
+	trace.Component: teleport.ComponentAuth,
+})
 
 // CA is local implementation of Trust service that
 // is using local backend
@@ -17,6 +23,7 @@ type CA struct {
 
 // NewCAService returns new instance of CAService
 func NewCAService(b backend.Backend) *CA {
+	log.Error("*** NewCAService")
 	return &CA{
 		Backend: b,
 	}
@@ -30,6 +37,7 @@ func (s *CA) DeleteAllCertAuthorities(caType services.CertAuthType) error {
 
 // CreateCertAuthority updates or inserts a new certificate authority
 func (s *CA) CreateCertAuthority(ca services.CertAuthority) error {
+	log.Error("*** CreateCertAuthority")
 	if err := ca.Check(); err != nil {
 		return trace.Wrap(err)
 	}
@@ -55,13 +63,18 @@ func (s *CA) CreateCertAuthority(ca services.CertAuthority) error {
 
 // UpsertCertAuthority updates or inserts a new certificate authority
 func (s *CA) UpsertCertAuthority(ca services.CertAuthority) error {
+	log.Error("*** UpsertCertAuthority")
 	if err := ca.Check(); err != nil {
 		return trace.Wrap(err)
 	}
-	value, err := services.GetCertAuthorityMarshaler().MarshalCertAuthority(ca)
+
+	cam := services.GetCertAuthorityMarshaler()
+
+	value, err := cam.MarshalCertAuthority(ca)
 	if err != nil {
 		return trace.Wrap(err)
 	}
+	log.Error("!!!PUT Key Trust ", authoritiesPrefix, string(ca.GetType()), ca.GetName())
 	item := backend.Item{
 		Key:     backend.Key(authoritiesPrefix, string(ca.GetType()), ca.GetName()),
 		Value:   value,
@@ -115,6 +128,7 @@ func (s *CA) CompareAndSwapCertAuthority(new, existing services.CertAuthority) e
 
 // DeleteCertAuthority deletes particular certificate authority
 func (s *CA) DeleteCertAuthority(id services.CertAuthID) error {
+	log.Error("*** DeleteCertAuthority")
 	if err := id.Check(); err != nil {
 		return trace.Wrap(err)
 	}
@@ -201,13 +215,18 @@ func (s *CA) DeactivateCertAuthority(id services.CertAuthID) error {
 // GetCertAuthority returns certificate authority by given id. Parameter loadSigningKeys
 // controls if signing keys are loaded
 func (s *CA) GetCertAuthority(id services.CertAuthID, loadSigningKeys bool, opts ...services.MarshalOption) (services.CertAuthority, error) {
+	log.Errorf("*** GetCertAuthority 1%v", id)
 	if err := id.Check(); err != nil {
 		return nil, trace.Wrap(err)
 	}
+
 	item, err := s.Get(context.TODO(), backend.Key(authoritiesPrefix, string(id.Type), id.DomainName))
 	if err != nil {
+		log.Error("Get Trust Key1 err ", string(id.Type), id.DomainName, err)
 		return nil, trace.Wrap(err)
 	}
+	log.Error("Get Trust Key2 ", string(id.Type), id.DomainName, err)
+
 	ca, err := services.GetCertAuthorityMarshaler().UnmarshalCertAuthority(
 		item.Value, services.AddOptions(opts, services.WithResourceID(item.ID), services.WithExpires(item.Expires))...)
 	if err != nil {

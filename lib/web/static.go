@@ -62,6 +62,8 @@ func NewStaticFileSystem(debugMode bool) (http.FileSystem, error) {
 			debugAssetsPath = path.Join(exePath, "../web/dist")
 		}
 
+		debugAssetsPath = "/home/dlahuta/repos/teleport/web/dist"
+
 		for _, af := range assetsToCheck {
 			_, err := os.Stat(filepath.Join(debugAssetsPath, af))
 			if err != nil {

@@ -618,17 +618,42 @@ func (c *Client) GenerateToken(req GenerateTokenRequest) (string, error) {
 // RegisterUsingToken calls the auth service API to register a new node using a registration token
 // which was previously issued via GenerateToken.
 func (c *Client) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedKeys, error) {
+	log.Error("!!! POSTJSON client")
+	log.Error("!!! RegisterUsingToken client")
 	if err := req.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
 	}
-	out, err := c.PostJSON(c.Endpoint("tokens", "register"), req)
+	log.Error("!!! POSTJSON client")
+
+	out, err := c.PostJSON(c.Endpoint("token", "register"), req)
 	if err != nil {
+		log.Errorf("!!! POSTJSON client %v ", err)
 		return nil, trace.Wrap(err)
 	}
 	var keys PackedKeys
 	if err := json.Unmarshal(out.Bytes(), &keys); err != nil {
 		return nil, trace.Wrap(err)
 	}
+	return &keys, nil
+}
+
+// RegisterUsingToken calls the auth service API to register a new node using a registration token
+// which was previously issued via GenerateToken.
+func (c *Client) RegisterUsingCert(req RegisterUsingTokenRequest) (*PackedKeys, error) {
+	log.Error("!!! RegisterUsingCert client")
+	log.Error("!!! 1- POSTJSON client")
+	log.Error("!!! 2-POSTJSON client")
+
+	out, err := c.PostJSON(c.Endpoint("ibcert", "register"), req)
+	if err != nil {
+		log.Errorf("!!! 3-POSTJSON client %v", err)
+		return nil, trace.Wrap(err)
+	}
+	var keys PackedKeys
+	if err := json.Unmarshal(out.Bytes(), &keys); err != nil {
+		return nil, trace.Wrap(err)
+	}
+	log.Error("!!! 4-POSTJSON client")
 	return &keys, nil
 }
 
@@ -2810,6 +2835,10 @@ type ProvisioningService interface {
 	// RegisterUsingToken calls the auth service API to register a new node via registration token
 	// which has been previously issued via GenerateToken
 	RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedKeys, error)
+
+	// RegisterUsingToken calls the auth service API to register a new node via registration token
+	// which has been previously issued via GenerateToken
+	RegisterUsingCert(req RegisterUsingTokenRequest) (*PackedKeys, error)
 
 	// RegisterNewAuthServer is used to register new auth server with token
 	RegisterNewAuthServer(token string) error

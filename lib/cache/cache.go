@@ -262,6 +262,7 @@ func New(config Config) (*Cache, error) {
 		return nil, trace.Wrap(err)
 	}
 	wrapper := backend.NewWrapper(config.Backend)
+	log.Errorf("!!! New %v", config)
 	ctx, cancel := context.WithCancel(config.Context)
 	cs := &Cache{
 		wrapper:            wrapper,

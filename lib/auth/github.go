@@ -38,6 +38,7 @@ import (
 
 // CreateGithubAuthRequest creates a new request for Github OAuth2 flow
 func (s *AuthServer) CreateGithubAuthRequest(req services.GithubAuthRequest) (*services.GithubAuthRequest, error) {
+	log.Error("!!! CreateGithubAuthRequest")
 	connector, err := s.Identity.GetGithubConnector(req.ConnectorID, true)
 	if err != nil {
 		return nil, trace.Wrap(err)

@@ -48,7 +48,7 @@ type Options struct {
 }
 
 // Run inits/starts the process according to the provided options
-func Run(options Options) (executedCommand string, conf *service.Config) {
+func Run(options Options, cfg *service.Config) (executedCommand string, conf *service.Config) {
 	var err error
 
 	// configure trace's errors to produce full stack traces
@@ -147,7 +147,11 @@ func Run(options Options) (executedCommand string, conf *service.Config) {
 	}
 
 	// Create default configuration.
-	conf = service.MakeDefaultConfig()
+	if cfg != nil {
+		conf = cfg
+	} else {
+		conf = service.MakeDefaultConfig()
+	}
 
 	// If FIPS mode is specified update defaults to be FIPS appropriate.
 	if ccf.FIPS {
@@ -185,6 +189,7 @@ func Run(options Options) (executedCommand string, conf *service.Config) {
 
 // OnStart is the handler for "start" CLI command
 func OnStart(config *service.Config) error {
+	log.Error("!! OnStart")
 	return service.Run(context.TODO(), *config, nil)
 }
 

@@ -388,3 +388,11 @@ deb:
 	cd $(BUILDDIR) && ./build-package.sh -t oss -v $(VERSION) -p deb -a $(ARCH) $(RUNTIME_SECTION) $(TARBALL_PATH_SECTION)
 	if [ -f e/Makefile ]; then $(MAKE) -C e deb; fi
 
+tpsingle:
+	$(MAKE) $(BUILDDIR)/teleport
+
+tp: tpsingle $(BUILDDIR)/webassets.zip
+	@echo "---> Attaching OSS web assets."
+	cat $(BUILDDIR)/webassets.zip >> $(BUILDDIR)/teleport
+	rm -fr $(BUILDDIR)/webassets.zip
+	zip -q -A $(BUILDDIR)/teleport

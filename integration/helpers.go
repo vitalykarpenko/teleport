@@ -253,6 +253,8 @@ func (s *InstanceSecrets) GetRoles() []services.Role {
 // case we always return hard-coded userCA + hostCA (and they share keys
 // for simplicity)
 func (s *InstanceSecrets) GetCAs() []services.CertAuthority {
+	log.Error("*** GetCAs")
+
 	hostCA := services.NewCertAuthority(services.HostCA, s.SiteName, [][]byte{s.PrivKey}, [][]byte{s.PubKey}, []string{})
 	hostCA.SetTLSKeyPairs([]services.TLSKeyPair{{Cert: s.TLSCACert, Key: s.PrivKey}})
 	return []services.CertAuthority{
@@ -551,6 +553,8 @@ func (i *TeleInstance) GenerateConfig(trustedSecrets []*InstanceSecrets, tconf *
 // Unlike Create() it allows for greater customization because it accepts
 // a full Teleport config structure
 func (i *TeleInstance) CreateEx(trustedSecrets []*InstanceSecrets, tconf *service.Config) error {
+	log.Error("!!!!CreateEx")
+
 	tconf, err := i.GenerateConfig(trustedSecrets, tconf)
 	if err != nil {
 		return trace.Wrap(err)
@@ -628,6 +632,8 @@ func (i *TeleInstance) CreateEx(trustedSecrets []*InstanceSecrets, tconf *servic
 
 // StartNode starts a SSH node and connects it to the cluster.
 func (i *TeleInstance) StartNode(tconf *service.Config) (*service.TeleportProcess, error) {
+	log.Error("!!!!StartNode")
+
 	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -684,6 +690,8 @@ func (i *TeleInstance) StartNode(tconf *service.Config) (*service.TeleportProces
 // StartNodeAndProxy starts a SSH node and a Proxy Server and connects it to
 // the cluster.
 func (i *TeleInstance) StartNodeAndProxy(name string, sshPort, proxyWebPort, proxySSHPort int) error {
+	log.Error("!!!!StartNodeAndProxy")
+
 	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName)
 	if err != nil {
 		return trace.Wrap(err)
@@ -765,6 +773,7 @@ type ProxyConfig struct {
 
 // StartProxy starts another Proxy Server and connects it to the cluster.
 func (i *TeleInstance) StartProxy(cfg ProxyConfig) (reversetunnel.Server, error) {
+	log.Error("!!!!StartProxy")
 	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName+"-"+cfg.Name)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -845,6 +854,7 @@ func (i *TeleInstance) StartProxy(cfg ProxyConfig) (reversetunnel.Server, error)
 // Reset re-creates the teleport instance based on the same configuration
 // This is needed if you want to stop the instance, reset it and start again
 func (i *TeleInstance) Reset() (err error) {
+	log.Error("!!!!Reset")
 	i.Process, err = service.NewTeleport(i.Config)
 	if err != nil {
 		return trace.Wrap(err)

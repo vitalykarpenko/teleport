@@ -388,6 +388,7 @@ type Process interface {
 type NewProcess func(cfg *Config) (Process, error)
 
 func newTeleportProcess(cfg *Config) (Process, error) {
+	log.Error("!!! NewTeleport")
 	return NewTeleport(cfg)
 }
 
@@ -900,6 +901,7 @@ func initExternalLog(auditConfig services.AuditConfig) (events.IAuditLog, error)
 
 // initAuthService can be called to initialize auth server service
 func (process *TeleportProcess) initAuthService() error {
+
 	var err error
 
 	cfg := process.Config
@@ -965,33 +967,34 @@ func (process *TeleportProcess) initAuthService() error {
 			return trace.Wrap(err)
 		}
 	}
-
+	log.Error("!!! first, create the AuthServer")
 	// first, create the AuthServer
 	authServer, err := auth.Init(auth.InitConfig{
-		Backend:              b,
-		Authority:            cfg.Keygen,
-		ClusterConfiguration: cfg.ClusterConfiguration,
-		ClusterConfig:        cfg.Auth.ClusterConfig,
-		ClusterName:          cfg.Auth.ClusterName,
-		AuthServiceName:      cfg.Hostname,
-		DataDir:              cfg.DataDir,
-		HostUUID:             cfg.HostUUID,
-		NodeName:             cfg.Hostname,
-		Authorities:          cfg.Auth.Authorities,
-		Resources:            cfg.Auth.Resources,
-		ReverseTunnels:       cfg.ReverseTunnels,
-		Trust:                cfg.Trust,
-		Presence:             cfg.Presence,
-		Events:               cfg.Events,
-		Provisioner:          cfg.Provisioner,
-		Identity:             cfg.Identity,
-		Access:               cfg.Access,
-		StaticTokens:         cfg.Auth.StaticTokens,
-		Roles:                cfg.Auth.Roles,
-		AuthPreference:       cfg.Auth.Preference,
-		OIDCConnectors:       cfg.OIDCConnectors,
-		AuditLog:             process.auditLog,
-		CipherSuites:         cfg.CipherSuites,
+		Backend:                b,
+		Authority:              cfg.Keygen,
+		ClusterConfiguration:   cfg.ClusterConfiguration,
+		ClusterConfig:          cfg.Auth.ClusterConfig,
+		ClusterName:            cfg.Auth.ClusterName,
+		AuthServiceName:        cfg.Hostname,
+		DataDir:                cfg.DataDir,
+		HostUUID:               cfg.HostUUID,
+		NodeName:               cfg.Hostname,
+		Authorities:            cfg.Auth.Authorities,
+		Resources:              cfg.Auth.Resources,
+		ReverseTunnels:         cfg.ReverseTunnels,
+		Trust:                  cfg.Trust,
+		Presence:               cfg.Presence,
+		Events:                 cfg.Events,
+		Provisioner:            cfg.Provisioner,
+		Identity:               cfg.Identity,
+		Access:                 cfg.Access,
+		StaticTokens:           cfg.Auth.StaticTokens,
+		Roles:                  cfg.Auth.Roles,
+		AuthPreference:         cfg.Auth.Preference,
+		OIDCConnectors:         cfg.OIDCConnectors,
+		AuditLog:               process.auditLog,
+		CipherSuites:           cfg.CipherSuites,
+		SkipPeriodicOperations: true,
 	})
 	if err != nil {
 		return trace.Wrap(err)
@@ -1080,6 +1083,8 @@ func (process *TeleportProcess) initAuthService() error {
 		return trace.Wrap(err)
 	}
 	go mux.Serve()
+	log.Error("!!!Starting Auth service with PROXY protocol support.")
+
 	process.RegisterCriticalFunc("auth.tls", func() error {
 		utils.Consolef(cfg.Console, teleport.ComponentAuth, "Auth service %s:%s is starting on %v.", teleport.Version, teleport.Gitref, cfg.Auth.SSHAddr.Addr)
 

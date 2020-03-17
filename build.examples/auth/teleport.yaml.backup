@@ -1,0 +1,17 @@
+teleport:
+  data_dir: /home/dlahuta/go/src/github.com/gravitational/teleport/1-auth-data
+  auth_servers:
+  - teleport.cluster.local:3025
+auth_service:
+  enabled: "yes"
+  tokens:
+    - "proxy,node:hello"
+  authentication:
+    second_factor: off
+  listen_addr: 0.0.0.0:3025
+
+ssh_service:
+  enabled: "no"
+proxy_service:
+  enabled: "yes"
+  public_addr: "teleport.cluster.local:3080"

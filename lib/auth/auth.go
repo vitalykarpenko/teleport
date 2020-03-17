@@ -62,6 +62,7 @@ type AuthServerOption func(*AuthServer)
 
 // NewAuthServer creates and configures a new AuthServer instance
 func NewAuthServer(cfg *InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
+	log.Errorf("!!! NewAuthServer auth.go %v", cfg.Trust)
 	if cfg.Trust == nil {
 		cfg.Trust = local.NewCAService(cfg.Backend)
 	}
@@ -1131,7 +1132,7 @@ func (r *RegisterUsingTokenRequest) CheckAndSetDefaults() error {
 // after a successful registration.
 func (s *AuthServer) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedKeys, error) {
 	log.Infof("Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
-
+	log.Errorf("!!! Cloud RegisterUsingToken %v %v %v", string(req.PublicTLSKey), req.HostID, req.Token)
 	if err := req.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1165,6 +1166,53 @@ func (s *AuthServer) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedK
 		return nil, trace.Wrap(err)
 	}
 	log.Infof("Node %q [%v] has joined the cluster.", req.NodeName, req.HostID)
+
+	log.Errorf("!!!! keys.Cert %v", string(keys.Cert))
+	log.Errorf("!!!! keys.Key %v", string(keys.Key))
+	for i, cacert := range keys.SSHCACerts {
+		log.Errorf("!!!! %d keys.SSHCACerts %v", i, string(cacert))
+
+	}
+	for i, catlscert := range keys.TLSCACerts {
+		log.Errorf("!!!! %d keys.TLSCACerts %v", i, string(catlscert))
+
+	}
+	log.Errorf("!!!! keys.TLSCert %v", string(keys.TLSCert))
+
+	return keys, nil
+}
+
+func (s *AuthServer) RegisterUsingCert(req RegisterUsingTokenRequest) (*PackedKeys, error) {
+	log.Infof("Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
+
+	// generate and return host certificate and keys
+	keys, err := s.GenerateServerKeys(GenerateServerKeysRequest{
+		HostID:               req.HostID,
+		NodeName:             req.NodeName,
+		Roles:                teleport.Roles{req.Role},
+		AdditionalPrincipals: req.AdditionalPrincipals,
+		PublicTLSKey:         req.PublicTLSKey,
+		PublicSSHKey:         req.PublicSSHKey,
+		RemoteAddr:           req.RemoteAddr,
+		DNSNames:             req.DNSNames,
+	})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	log.Infof("Node %q [%v] has joined the cluster.", req.NodeName, req.HostID)
+
+	log.Errorf("!!!! keys.Cert %v", string(keys.Cert))
+	log.Errorf("!!!! keys.Key %v", string(keys.Key))
+	for i, cacert := range keys.SSHCACerts {
+		log.Errorf("!!!! %d keys.SSHCACerts %v", i, string(cacert))
+
+	}
+	for i, catlscert := range keys.TLSCACerts {
+		log.Errorf("!!!! %d keys.TLSCACerts %v", i, string(catlscert))
+
+	}
+	log.Errorf("!!!! keys.TLSCert %v", string(keys.TLSCert))
+
 	return keys, nil
 }
 

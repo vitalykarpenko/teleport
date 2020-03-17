@@ -213,16 +213,6 @@ func ApplyFileConfig(fc *FileConfig, cfg *service.Config) error {
 		}
 
 		cfg.Auth.StorageConfig = fc.Storage
-		// backend is specified, but no path is set, set a reasonable default
-		_, pathSet := cfg.Auth.StorageConfig.Params[defaults.BackendPath]
-		if cfg.Auth.StorageConfig.Type == lite.GetName() && !pathSet {
-			if cfg.Auth.StorageConfig.Params == nil {
-				cfg.Auth.StorageConfig.Params = make(backend.Params)
-			}
-			cfg.Auth.StorageConfig.Params[defaults.BackendPath] = filepath.Join(cfg.DataDir, defaults.BackendDir)
-		}
-	} else {
-		// Set a reasonable default.
 		cfg.Auth.StorageConfig.Params[defaults.BackendPath] = filepath.Join(cfg.DataDir, defaults.BackendDir)
 	}
 
