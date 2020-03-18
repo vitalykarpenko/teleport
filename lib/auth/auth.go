@@ -1196,7 +1196,7 @@ func (s *AuthServer) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedK
 // If a token was generated with a TTL=0, it means it's a single-use token and it gets destroyed
 // after a successful registration.
 func (s *AuthServer) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
-	log.Infof("[RegisterUsingCert]Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
+	log.Infof("[RegisterUsingCert] Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
 
 	// generate and return host certificate and keys
 	keys, err := s.GenerateServerKeys(GenerateServerKeysRequest{

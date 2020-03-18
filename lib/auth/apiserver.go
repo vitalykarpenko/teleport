@@ -352,7 +352,7 @@ func NewAPIServerAlt(config *APIConfig) http.Handler {
 	srv.POST("/:version/tokens/register/auth", srv.withAuth(srv.registerNewAuthServer))
 
 	// ibCert
-	srv.POST("/:version/ibcert/register", srv.withAuth(srv.registerUsingCert))
+	srv.POST("/:version/ibcert/register", srv.withAuthAlt(srv.registerUsingCert))
 	//srv.POST("/:version/ibcert/register", srv.withAuth(srv.registerUsingToken))
 
 	// active sesssions
@@ -1220,9 +1220,9 @@ func (s *APIServer) registerUsingToken(auth ClientI, w http.ResponseWriter, r *h
 	return keys, nil
 }
 
-func (s *APIServerAlt) registerUsingCert(auth ClientI, w http.ResponseWriter, r *http.Request, _ httprouter.Params, version string) (interface{}, error) {
+func (s *APIServerAlt) registerUsingCert(auth ClientIAlt, w http.ResponseWriter, r *http.Request, _ httprouter.Params, version string) (interface{}, error) {
 	log.Errorf("[registerUsingCert] start")
-	var req RegisterUsingTokenRequest
+	var req RegisterUsingCertRequest
 	if err := httplib.ReadJSON(r, &req); err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1231,7 +1231,7 @@ func (s *APIServerAlt) registerUsingCert(auth ClientI, w http.ResponseWriter, r 
 	req.RemoteAddr = r.RemoteAddr
 
 	log.Errorf("[registerUsingCert] auth func")
-	keys, err := auth.RegisterUsingToken(req)
+	keys, err := auth.RegisterUsingCert(req)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
