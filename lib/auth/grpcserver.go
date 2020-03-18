@@ -18,7 +18,7 @@ package auth
 
 import (
 	"context"
-	"fmt"
+	//"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -199,12 +199,16 @@ func (g *GRPCServer) StreamSessionRecording(stream proto.AuthService_StreamSessi
 		return trail.ToGRPC(err)
 	}
 
-	fmt.Printf("--> GRPCServer: New Stream.\n")
+	// Extract identity of server from x509 certificate.
+	serverID, err := g.getServerID(auth)
+	if err != nil {
+		return trace.Wrap(err)
+	}
 
 	// Create a stream building state machine. This state machine will validate
 	// session events, construct the session archive, and upload it to the
 	// storage layer.
-	sb, err := g.manager.NewStream(context.Background(), auth)
+	sb, err := g.manager.NewStream(serverID, auth)
 	if err != nil {
 		return trail.ToGRPC(err)
 	}
@@ -213,7 +217,6 @@ func (g *GRPCServer) StreamSessionRecording(stream proto.AuthService_StreamSessi
 	for {
 		chunk, err := stream.Recv()
 		if err == io.EOF {
-			fmt.Printf("--> GRPCServer: Stream complete.\n")
 			return nil
 		}
 		if err != nil {
@@ -266,8 +269,26 @@ func (g *GRPCServer) authenticate(ctx context.Context) (*grpcContext, error) {
 	}, nil
 }
 
+// getServerID returns the ID of the connected client.
+func (s *GRPCServer) getServerID(r *grpcContext) (string, error) {
+	clusterName, err := s.AuthServer.GetDomainName()
+	if err != nil {
+		return "", trace.Wrap(err)
+	}
+
+	// The username extracted from the node's identity (x.509 certificate)
+	// is expected to consist of "<server-id>.<cluster-name>" so strip the
+	// cluster name suffix to get the server id.
+	//
+	// Note that as of right now Teleport expects server id to be a UUID4
+	// but older Gravity clusters used to override it with strings like
+	// "192_168_1_1.<cluster-name>" so this code can't rely on it being
+	// UUID4 to account for clusters upgraded from older versions.
+	return strings.TrimSuffix(r.AuthContext.Identity.Username, "."+clusterName), nil
+}
+
 // NewGRPCServer returns a new instance of GRPC server
-func NewGRPCServer(cfg APIConfig) http.Handler {
+func NewGRPCServer(ctx context.Context, cfg APIConfig) http.Handler {
 	authServer := &GRPCServer{
 		APIConfig: cfg,
 		Entry: logrus.WithFields(logrus.Fields{
@@ -275,8 +296,7 @@ func NewGRPCServer(cfg APIConfig) http.Handler {
 		}),
 		httpHandler: NewAPIServer(&cfg),
 		grpcHandler: grpc.NewServer(),
-		// TODO(russjones): Propagate a cancelation context from the parent here.
-		manager: events.NewStreamManger(context.Background()),
+		manager:     events.NewStreamManger(ctx),
 	}
 	proto.RegisterAuthServiceServer(authServer.grpcHandler, authServer)
 	return authServer

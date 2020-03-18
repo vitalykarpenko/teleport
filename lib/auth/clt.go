@@ -2093,17 +2093,21 @@ func (c *Client) GetSessionChunk(namespace string, sid session.ID, offsetBytes, 
 
 // UploadSessionRecording uploads session recording to the audit server
 func (c *Client) UploadSessionRecording(r events.SessionRecording) error {
+	// Check if the Auth Server supports GRPC streaming, and if it does, stream
+	// the session over.
 	err := c.grpcStreamSessionRecording(r)
 	if err == nil {
-		fmt.Printf("--> No error!\n")
 		return nil
 	}
 	if grpc.Code(err) != codes.Unimplemented {
 		return trace.Wrap(err)
 	}
 
-	fmt.Printf("--> ENTER HERE.\n")
-
+	// DELETE IN: 5.0.0
+	//
+	// Since this feature will be officially introduced in Teleport 4.3,
+	// multipart file upload support will be dropped in 5.0 as all supported
+	// clients (5.0 and 4.3) will be sending GRPC streams.
 	file := roundtrip.File{
 		Name:     "recording",
 		Filename: "recording",
@@ -2120,24 +2124,21 @@ func (c *Client) UploadSessionRecording(r events.SessionRecording) error {
 	return nil
 }
 
+// grpcStreamSessionRecording will stream the session recording to the
+// Auth Server.
 func (c *Client) grpcStreamSessionRecording(r events.SessionRecording) error {
-	// Get GRPC client to stream session recording.
+	// Get a GRPC client.
 	clt, err := c.grpc()
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	stream, err := clt.StreamSessionRecording(context.Background())
-	if err != nil {
-		return trail.FromGRPC(err)
-	}
 
 	// Stream the session recording.
-	err = events.StreamSessionRecording(stream, r)
+	err = events.StreamSessionRecording(clt, r)
 	if err != nil {
 		return trace.Wrap(err)
 	}
 
-	fmt.Printf("--> Client: grpcStreamSessionRecording complete.\n")
 	return nil
 }
 

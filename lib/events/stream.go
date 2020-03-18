@@ -22,8 +22,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/hex"
-	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -31,6 +29,7 @@ import (
 
 	"github.com/gravitational/teleport/lib/auth/proto"
 	"github.com/gravitational/teleport/lib/session"
+	"github.com/gravitational/teleport/lib/utils"
 
 	"github.com/gravitational/trace"
 	"github.com/gravitational/trace/trail"
@@ -52,11 +51,6 @@ const (
 	stateComplete = 7
 )
 
-//const (
-//	typeRaw   = 0
-//	typeEvent = 1
-//)
-
 const (
 	concurrentStreams = 2
 )
@@ -68,8 +62,15 @@ type SessionUploader interface {
 type StreamManager struct {
 	log *logrus.Entry
 
-	pool         sync.Pool
-	semaphore    chan struct{}
+	// pool is used to store a pool of buffers used to build in-memory gzip files.
+	pool sync.Pool
+
+	// TODO: Remove?
+	// semaphore is used to limit the number of in-memory gzip files.
+	semaphore chan struct{}
+
+	// closeContext is used to send a signal to the stream manager that the
+	// process is shutting down.
 	closeContext context.Context
 }
 
@@ -78,6 +79,10 @@ type Stream struct {
 	state    int64
 	uploader SessionUploader
 
+	// serverID is the identity of the server extracted from the x509 certificate.
+	serverID string
+
+	// sessionID is the unique ID of the session.
 	sessionID string
 
 	// tarWriter is used to create the archive itself.
@@ -89,8 +94,9 @@ type Stream struct {
 	// zipWriter is used to create the zip files within the archive.
 	zipWriter *gzip.Writer
 
-	closeContext context.Context
-	closeCancel  context.CancelFunc
+	uploadContext context.Context
+
+	uploadCancel context.CancelFunc
 }
 
 func NewStreamManger(ctx context.Context) *StreamManager {
@@ -108,14 +114,22 @@ func NewStreamManger(ctx context.Context) *StreamManager {
 	}
 }
 
-func (s *StreamManager) NewStream(ctx context.Context, uploader SessionUploader) (*Stream, error) {
-	ctx, cancel := context.WithCancel(ctx)
+func (s *StreamManager) NewStream(serverID string, uploader SessionUploader) (*Stream, error) {
+	// TODO: This upload context, I need a better story around when it should be
+	// canceled. It should cancel upon any processing error actually.
+
+	// Wrap the parent process context and create an upload context that is
+	// used by the uploader to cancel a upload if one of the events in the
+	// archive is invalid.
+	ctx, cancel := context.WithCancel(s.closeContext)
+
 	return &Stream{
-		manager:      s,
-		state:        stateInit,
-		uploader:     uploader,
-		closeContext: ctx,
-		closeCancel:  cancel,
+		manager:       s,
+		state:         stateInit,
+		uploader:      uploader,
+		serverID:      serverID,
+		uploadContext: ctx,
+		uploadCancel:  cancel,
 	}, nil
 }
 
@@ -159,6 +173,7 @@ func (s *Stream) Process(chunk *proto.SessionChunk) error {
 		// Kick off the upload in a goroutine so it can be uploaded as it
 		// is processed.
 		go s.upload(chunk.GetNamespace(), session.ID(chunk.GetSessionID()), pr)
+
 	case stateComplete:
 		s.manager.log.Debugf("Changing state to COMPLETE for stream %v.", s.sessionID)
 
@@ -212,8 +227,6 @@ func (s *Stream) processRaw(chunk *proto.SessionChunk) error {
 	case stateChunkRaw:
 		s.manager.log.Debugf("Changing state to CHUNK RAW for stream %v.", s.sessionID)
 
-		fmt.Printf("--> Raw chunk: %v.\n", hex.Dump(chunk.GetData()))
-
 		_, err = s.tarWriter.Write(chunk.GetData())
 		if err != nil {
 			return trace.Wrap(err)
@@ -266,6 +279,24 @@ func (s *Stream) processEvents(chunk *proto.SessionChunk) error {
 	case stateChunkEvents:
 		s.manager.log.Debugf("Changing state to CHUNK EVENTS for stream %v.", s.sessionID)
 
+		// Validate incoming event.
+		var f EventFields
+		err = utils.FastUnmarshal(chunk.GetData(), &f)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		err := ValidateEvent(f, s.serverID)
+		if err != nil {
+			// Cancel any upload that's in-progress because this event is invalid.
+			s.uploadCancel()
+
+			s.manager.log.Warnf("Rejecting audit event %v from %v: %v. A node is attempting to "+
+				"submit events for an identity other than the one on its x509 certificate.",
+				f.GetType(), s.serverID, err)
+			return trace.AccessDenied("failed to validate event")
+		}
+
+		// Write event to zip buffer.
 		_, err = s.zipWriter.Write(append(chunk.GetData(), '\n'))
 		if err != nil {
 			return trace.Wrap(err)
@@ -291,13 +322,15 @@ func (s *Stream) Reader() io.Reader {
 }
 
 func (s *Stream) Close() error {
-	s.closeCancel()
+	//s.closeCancel()
 	return nil
 }
 
 func (s *Stream) upload(namespace string, sessionID session.ID, reader io.Reader) {
+	defer s.uploadCancel()
+
 	err := s.uploader.UploadSessionRecording(SessionRecording{
-		CancelContext: s.closeContext,
+		CancelContext: s.uploadContext,
 		SessionID:     sessionID,
 		Namespace:     namespace,
 		Recording:     reader,
@@ -307,9 +340,15 @@ func (s *Stream) upload(namespace string, sessionID session.ID, reader io.Reader
 	}
 }
 
-func StreamSessionRecording(stream proto.AuthService_StreamSessionRecordingClient, r SessionRecording) error {
+func StreamSessionRecording(clt proto.AuthServiceClient, r SessionRecording) error {
+	// Open the session stream to the Auth Server.
+	stream, err := clt.StreamSessionRecording(context.Background())
+	if err != nil {
+		return trail.FromGRPC(err)
+	}
+
 	// Initialize stream.
-	err := stream.Send(&proto.SessionChunk{
+	err = stream.Send(&proto.SessionChunk{
 		State:     stateInit,
 		Namespace: r.Namespace,
 		SessionID: r.SessionID.String(),
