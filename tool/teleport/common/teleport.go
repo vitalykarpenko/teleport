@@ -196,7 +196,7 @@ func Run(options Options, cfg *service.Config) (executedCommand string, conf *se
 // OnStart is the handler for "start" CLI command
 func OnStart(config *service.Config) error {
 	log.Error("!! OnStart")
-	return service.Run(context.TODO(), *config, nil)
+	return service.Run(context.TODO(), *config, service.NewTeleportProcessAlt)
 }
 
 // onStatus is the handler for "status" CLI command

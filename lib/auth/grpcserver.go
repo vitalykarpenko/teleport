@@ -347,6 +347,21 @@ func NewGRPCServer(cfg APIConfig) http.Handler {
 	return authServer
 }
 
+// NewGRPCServerALt returns a new instance of GRPC server
+func NewGRPCServerALt(cfg APIConfig) http.Handler {
+	log.Error("[NewGRPCServerALt] start new server")
+	authServer := &GRPCServer{
+		APIConfig: cfg,
+		Entry: logrus.WithFields(logrus.Fields{
+			trace.Component: teleport.Component(teleport.ComponentAuth, teleport.ComponentGRPC),
+		}),
+		httpHandler: NewAPIServerAlt(&cfg),
+		grpcHandler: grpc.NewServer(),
+	}
+	proto.RegisterAuthServiceServer(authServer.grpcHandler, authServer)
+	return authServer
+}
+
 // ServeHTTP dispatches requests based on the request type
 func (g *GRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// magic combo match signifying GRPC request

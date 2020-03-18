@@ -200,6 +200,10 @@ func (c *Connector) Close() error {
 	return nil
 }
 
+type TeleportProcessAlt struct {
+	*TeleportProcess
+}
+
 // TeleportProcess structure holds the state of the Teleport daemon, controlling
 // execution and configuration of the teleport services: ssh, auth and proxy.
 type TeleportProcess struct {
@@ -388,8 +392,11 @@ type Process interface {
 type NewProcess func(cfg *Config) (Process, error)
 
 func newTeleportProcess(cfg *Config) (Process, error) {
-	log.Error("!!! NewTeleport")
 	return NewTeleport(cfg)
+}
+
+func NewTeleportProcessAlt(cfg *Config) (Process, error) {
+	return NewTeleportAlt(cfg)
 }
 
 // Run starts teleport processes, waits for signals
@@ -497,6 +504,196 @@ func waitAndReload(ctx context.Context, cfg Config, srv Process, newTeleport New
 		log.Infof("The old service was successfully shut down gracefully.")
 	}
 	return newSrv, nil
+}
+
+func NewTeleportAlt(cfg *Config) (*TeleportProcessAlt, error) {
+	var err error
+
+	// Before we do anything reset the SIGINT handler back to the default.
+	system.ResetInterruptSignalHandler()
+
+	// Validate the config before accessing it.
+	if err := validateConfig(cfg); err != nil {
+		return nil, trace.Wrap(err, "configuration error")
+	}
+
+	// If FIPS mode was requested make sure binary is build against BoringCrypto.
+	if cfg.FIPS {
+		if !modules.GetModules().IsBoringBinary() {
+			return nil, trace.BadParameter("binary not compiled against BoringCrypto, check " +
+				"that Enterprise release was downloaded from " +
+				"https://dashboard.gravitational.com")
+		}
+	}
+
+	// create the data directory if it's missing
+	_, err = os.Stat(cfg.DataDir)
+	if os.IsNotExist(err) {
+		err := os.MkdirAll(cfg.DataDir, os.ModeDir|0700)
+		if err != nil {
+			return nil, trace.ConvertSystemError(err)
+		}
+	}
+
+	if len(cfg.FileDescriptors) == 0 {
+		cfg.FileDescriptors, err = importFileDescriptors()
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+	}
+
+	// if there's no host uuid initialized yet, try to read one from the
+	// one of the identities
+	cfg.HostUUID, err = utils.ReadHostUUID(cfg.DataDir)
+	if err != nil {
+		if !trace.IsNotFound(err) {
+			return nil, trace.Wrap(err)
+		}
+		if len(cfg.Identities) != 0 {
+			cfg.HostUUID = cfg.Identities[0].ID.HostUUID
+			log.Infof("Taking host UUID from first identity: %v.", cfg.HostUUID)
+		} else {
+			cfg.HostUUID = uuid.New()
+			log.Infof("Generating new host UUID: %v.", cfg.HostUUID)
+		}
+		if err := utils.WriteHostUUID(cfg.DataDir, cfg.HostUUID); err != nil {
+			return nil, trace.Wrap(err)
+		}
+	}
+
+	// if user started auth and another service (without providing the auth address for
+	// that service, the address of the in-process auth will be used
+	if cfg.Auth.Enabled && len(cfg.AuthServers) == 0 {
+		cfg.AuthServers = []utils.NetAddr{cfg.Auth.SSHAddr}
+	}
+
+	// if user did not provide auth domain name, use this host's name
+	if cfg.Auth.Enabled && cfg.Auth.ClusterName == nil {
+		cfg.Auth.ClusterName, err = services.NewClusterName(services.ClusterNameSpecV2{
+			ClusterName: cfg.Hostname,
+		})
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+	}
+
+	processID := fmt.Sprintf("%v", nextProcessID())
+	supervisor := NewSupervisor(processID)
+	storage, err := auth.NewProcessStorage(supervisor.ExitContext(), filepath.Join(cfg.DataDir, teleport.ComponentProcess))
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	if cfg.Clock == nil {
+		cfg.Clock = clockwork.NewRealClock()
+	}
+
+	process := &TeleportProcessAlt{&TeleportProcess{
+		Clock:               cfg.Clock,
+		Supervisor:          supervisor,
+		Config:              cfg,
+		Identities:          make(map[teleport.Role]*auth.Identity),
+		connectors:          make(map[teleport.Role]*Connector),
+		importedDescriptors: cfg.FileDescriptors,
+		storage:             storage,
+		id:                  processID,
+		keyPairs:            make(map[keyPairKey]KeyPair),
+	}}
+
+	process.Entry = logrus.WithFields(logrus.Fields{
+		trace.Component: teleport.Component(teleport.ComponentProcess, process.id),
+	})
+
+	serviceStarted := false
+
+	if !cfg.DiagnosticAddr.IsEmpty() {
+		if err := process.initDiagnosticService(); err != nil {
+			return nil, trace.Wrap(err)
+		}
+	} else {
+		warnOnErr(process.closeImportedDescriptors(teleport.ComponentDiagnostic))
+	}
+
+	// Create a process wide key generator that will be shared. This is so the
+	// key generator can pre-generate keys and share these across services.
+	if cfg.Keygen == nil {
+		precomputeCount := native.PrecomputedNum
+		// in case if not auth or proxy services are enabled,
+		// there is no need to precompute any SSH keys in the pool
+		if !cfg.Auth.Enabled && !cfg.Proxy.Enabled {
+			precomputeCount = 0
+		}
+		var err error
+		cfg.Keygen, err = native.New(process.ExitContext(), native.PrecomputeKeys(precomputeCount))
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+	}
+
+	// Produce global TeleportReadyEvent
+	// when all components have started
+	eventMapping := EventMapping{
+		Out: TeleportReadyEvent,
+	}
+	if cfg.Auth.Enabled {
+		eventMapping.In = append(eventMapping.In, AuthTLSReady)
+	}
+	if cfg.SSH.Enabled {
+		eventMapping.In = append(eventMapping.In, NodeSSHReady)
+	}
+	if cfg.Proxy.Enabled {
+		eventMapping.In = append(eventMapping.In, ProxySSHReady)
+	}
+	process.RegisterEventMapping(eventMapping)
+
+	if cfg.Auth.Enabled {
+		if err := process.initAuthService(); err != nil {
+			return nil, trace.Wrap(err)
+		}
+		serviceStarted = true
+	} else {
+		warnOnErr(process.closeImportedDescriptors(teleport.ComponentAuth))
+	}
+
+	if cfg.SSH.Enabled {
+		if err := process.initSSH(); err != nil {
+			return nil, err
+		}
+		serviceStarted = true
+	} else {
+		warnOnErr(process.closeImportedDescriptors(teleport.ComponentNode))
+	}
+
+	if cfg.Proxy.Enabled {
+		eventMapping.In = append(eventMapping.In, ProxySSHReady)
+		if err := process.initProxy(); err != nil {
+			return nil, err
+		}
+		serviceStarted = true
+	} else {
+		warnOnErr(process.closeImportedDescriptors(teleport.ComponentProxy))
+	}
+
+	process.RegisterFunc("common.rotate", process.periodicSyncRotationState)
+
+	if !serviceStarted {
+		return nil, trace.BadParameter("all services failed to start")
+	}
+
+	// create the new pid file only after started successfully
+	if cfg.PIDFile != "" {
+		f, err := os.OpenFile(cfg.PIDFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		if err != nil {
+			return nil, trace.ConvertSystemError(err)
+		}
+		fmt.Fprintf(f, "%v", os.Getpid())
+		defer f.Close()
+	}
+
+	// notify parent process that this process has started
+	go process.notifyParent()
+
+	return process, nil
 }
 
 // NewTeleport takes the daemon configuration, instantiates all required services
@@ -901,7 +1098,6 @@ func initExternalLog(auditConfig services.AuditConfig) (events.IAuditLog, error)
 
 // initAuthService can be called to initialize auth server service
 func (process *TeleportProcess) initAuthService() error {
-
 	var err error
 
 	cfg := process.Config
@@ -967,34 +1163,33 @@ func (process *TeleportProcess) initAuthService() error {
 			return trace.Wrap(err)
 		}
 	}
-	log.Error("!!! first, create the AuthServer")
+
 	// first, create the AuthServer
 	authServer, err := auth.Init(auth.InitConfig{
-		Backend:                b,
-		Authority:              cfg.Keygen,
-		ClusterConfiguration:   cfg.ClusterConfiguration,
-		ClusterConfig:          cfg.Auth.ClusterConfig,
-		ClusterName:            cfg.Auth.ClusterName,
-		AuthServiceName:        cfg.Hostname,
-		DataDir:                cfg.DataDir,
-		HostUUID:               cfg.HostUUID,
-		NodeName:               cfg.Hostname,
-		Authorities:            cfg.Auth.Authorities,
-		Resources:              cfg.Auth.Resources,
-		ReverseTunnels:         cfg.ReverseTunnels,
-		Trust:                  cfg.Trust,
-		Presence:               cfg.Presence,
-		Events:                 cfg.Events,
-		Provisioner:            cfg.Provisioner,
-		Identity:               cfg.Identity,
-		Access:                 cfg.Access,
-		StaticTokens:           cfg.Auth.StaticTokens,
-		Roles:                  cfg.Auth.Roles,
-		AuthPreference:         cfg.Auth.Preference,
-		OIDCConnectors:         cfg.OIDCConnectors,
-		AuditLog:               process.auditLog,
-		CipherSuites:           cfg.CipherSuites,
-		SkipPeriodicOperations: true,
+		Backend:              b,
+		Authority:            cfg.Keygen,
+		ClusterConfiguration: cfg.ClusterConfiguration,
+		ClusterConfig:        cfg.Auth.ClusterConfig,
+		ClusterName:          cfg.Auth.ClusterName,
+		AuthServiceName:      cfg.Hostname,
+		DataDir:              cfg.DataDir,
+		HostUUID:             cfg.HostUUID,
+		NodeName:             cfg.Hostname,
+		Authorities:          cfg.Auth.Authorities,
+		Resources:            cfg.Auth.Resources,
+		ReverseTunnels:       cfg.ReverseTunnels,
+		Trust:                cfg.Trust,
+		Presence:             cfg.Presence,
+		Events:               cfg.Events,
+		Provisioner:          cfg.Provisioner,
+		Identity:             cfg.Identity,
+		Access:               cfg.Access,
+		StaticTokens:         cfg.Auth.StaticTokens,
+		Roles:                cfg.Auth.Roles,
+		AuthPreference:       cfg.Auth.Preference,
+		OIDCConnectors:       cfg.OIDCConnectors,
+		AuditLog:             process.auditLog,
+		CipherSuites:         cfg.CipherSuites,
 	})
 	if err != nil {
 		return trace.Wrap(err)
@@ -1083,8 +1278,310 @@ func (process *TeleportProcess) initAuthService() error {
 		return trace.Wrap(err)
 	}
 	go mux.Serve()
-	log.Error("!!!Starting Auth service with PROXY protocol support.")
+	process.RegisterCriticalFunc("auth.tls", func() error {
+		utils.Consolef(cfg.Console, teleport.ComponentAuth, "Auth service %s:%s is starting on %v.", teleport.Version, teleport.Gitref, cfg.Auth.SSHAddr.Addr)
 
+		// since tlsServer.Serve is a blocking call, we emit this even right before
+		// the service has started
+		process.BroadcastEvent(Event{Name: AuthTLSReady, Payload: nil})
+		err := tlsServer.Serve(mux.TLS())
+		if err != nil && err != http.ErrServerClosed {
+			log.Warningf("TLS server exited with error: %v.", err)
+		}
+		return nil
+	})
+	process.RegisterFunc("auth.heartbeat.broadcast", func() error {
+		// Heart beat auth server presence, this is not the best place for this
+		// logic, consolidate it into auth package later
+		connector, err := process.connectToAuthService(teleport.RoleAdmin)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		// External integrations rely on this event:
+		process.BroadcastEvent(Event{Name: AuthIdentityEvent, Payload: connector})
+		process.onExit("auth.broadcast", func(payload interface{}) {
+			connector.Close()
+		})
+		return nil
+	})
+
+	// figure out server public address
+	authAddr := cfg.Auth.SSHAddr.Addr
+	host, port, err := net.SplitHostPort(authAddr)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// advertise-ip is explicitly set:
+	if process.Config.AdvertiseIP != "" {
+		ahost, aport, err := utils.ParseAdvertiseAddr(process.Config.AdvertiseIP)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		// if port is not set in the advertise addr, use the default one
+		if aport == "" {
+			aport = port
+		}
+		authAddr = net.JoinHostPort(ahost, aport)
+	} else {
+		// advertise-ip is not set, while the CA is listening on 0.0.0.0? lets try
+		// to guess the 'advertise ip' then:
+		if net.ParseIP(host).IsUnspecified() {
+			ip, err := utils.GuessHostIP()
+			if err != nil {
+				log.Warn(err)
+			} else {
+				authAddr = net.JoinHostPort(ip.String(), port)
+			}
+		}
+		log.Warnf("Configuration setting auth_service/advertise_ip is not set. guessing %v.", authAddr)
+	}
+
+	heartbeat, err := srv.NewHeartbeat(srv.HeartbeatConfig{
+		Mode:      srv.HeartbeatModeAuth,
+		Context:   process.ExitContext(),
+		Component: teleport.ComponentAuth,
+		Announcer: authServer,
+		GetServerInfo: func() (services.Server, error) {
+			srv := services.ServerV2{
+				Kind:    services.KindAuthServer,
+				Version: services.V2,
+				Metadata: services.Metadata{
+					Namespace: defaults.Namespace,
+					Name:      process.Config.HostUUID,
+				},
+				Spec: services.ServerSpecV2{
+					Addr:     authAddr,
+					Hostname: process.Config.Hostname,
+				},
+			}
+			state, err := process.storage.GetState(teleport.RoleAdmin)
+			if err != nil {
+				if !trace.IsNotFound(err) {
+					log.Warningf("Failed to get rotation state: %v.", err)
+					return nil, trace.Wrap(err)
+				}
+			} else {
+				srv.Spec.Rotation = state.Spec.Rotation
+			}
+			srv.SetTTL(process, defaults.ServerAnnounceTTL)
+			return &srv, nil
+		},
+		KeepAlivePeriod: defaults.ServerKeepAliveTTL,
+		AnnouncePeriod:  defaults.ServerAnnounceTTL/2 + utils.RandomDuration(defaults.ServerAnnounceTTL/10),
+		CheckPeriod:     defaults.HeartbeatCheckPeriod,
+		ServerTTL:       defaults.ServerAnnounceTTL,
+	})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	process.RegisterFunc("auth.heartbeat", heartbeat.Run)
+	// execute this when process is asked to exit:
+	process.onExit("auth.shutdown", func(payload interface{}) {
+		// The listeners have to be closed here, because if shutdown
+		// was called before the start of the http server,
+		// the http server would have not started tracking the listeners
+		// and http.Shutdown will do nothing.
+		if mux != nil {
+			warnOnErr(mux.Close())
+		}
+		if listener != nil {
+			warnOnErr(listener.Close())
+		}
+		if payload == nil {
+			log.Info("Shutting down immediately.")
+			warnOnErr(tlsServer.Close())
+		} else {
+			log.Info("Shutting down gracefully.")
+			ctx := payloadContext(payload)
+			warnOnErr(tlsServer.Shutdown(ctx))
+		}
+		log.Info("Exited.")
+	})
+	return nil
+}
+
+// initAuthService can be called to initialize auth server service
+func (process *TeleportProcessAlt) initAuthService() error {
+	var err error
+
+	cfg := process.Config
+
+	// Initialize the storage back-ends for keys, events and records
+	b, err := process.initAuthStorage()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	process.backend = b
+
+	// create the audit log, which will be consuming (and recording) all events
+	// and recording all sessions.
+	if cfg.Auth.NoAudit {
+		// this is for teleconsole
+		process.auditLog = events.NewDiscardAuditLog()
+
+		warningMessage := "Warning: Teleport audit and session recording have been " +
+			"turned off. This is dangerous, you will not be able to view audit events " +
+			"or save and playback recorded sessions."
+		process.Warn(warningMessage)
+	} else {
+		// check if session recording has been disabled. note, we will continue
+		// logging audit events, we just won't record sessions.
+		recordSessions := true
+		if cfg.Auth.ClusterConfig.GetSessionRecording() == services.RecordOff {
+			recordSessions = false
+
+			warningMessage := "Warning: Teleport session recording have been turned off. " +
+				"This is dangerous, you will not be able to save and playback sessions."
+			process.Warn(warningMessage)
+		}
+
+		auditConfig := cfg.Auth.ClusterConfig.GetAuditConfig()
+		uploadHandler, err := initUploadHandler(auditConfig)
+		if err != nil {
+			if !trace.IsNotFound(err) {
+				return trace.Wrap(err)
+			}
+		}
+
+		externalLog, err := initExternalLog(auditConfig)
+		if err != nil {
+			if !trace.IsNotFound(err) {
+				return trace.Wrap(err)
+			}
+		}
+
+		auditServiceConfig := events.AuditLogConfig{
+			Context:        process.ExitContext(),
+			DataDir:        filepath.Join(cfg.DataDir, teleport.LogsDir),
+			RecordSessions: recordSessions,
+			ServerID:       cfg.HostUUID,
+			UploadHandler:  uploadHandler,
+			ExternalLog:    externalLog,
+		}
+		auditServiceConfig.UID, auditServiceConfig.GID, err = adminCreds()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		process.auditLog, err = events.NewAuditLog(auditServiceConfig)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+	}
+
+	// first, create the AuthServer
+	authServer, err := auth.Init(auth.InitConfig{
+		Backend:              b,
+		Authority:            cfg.Keygen,
+		ClusterConfiguration: cfg.ClusterConfiguration,
+		ClusterConfig:        cfg.Auth.ClusterConfig,
+		ClusterName:          cfg.Auth.ClusterName,
+		AuthServiceName:      cfg.Hostname,
+		DataDir:              cfg.DataDir,
+		HostUUID:             cfg.HostUUID,
+		NodeName:             cfg.Hostname,
+		Authorities:          cfg.Auth.Authorities,
+		Resources:            cfg.Auth.Resources,
+		ReverseTunnels:       cfg.ReverseTunnels,
+		Trust:                cfg.Trust,
+		Presence:             cfg.Presence,
+		Events:               cfg.Events,
+		Provisioner:          cfg.Provisioner,
+		Identity:             cfg.Identity,
+		Access:               cfg.Access,
+		StaticTokens:         cfg.Auth.StaticTokens,
+		Roles:                cfg.Auth.Roles,
+		AuthPreference:       cfg.Auth.Preference,
+		OIDCConnectors:       cfg.OIDCConnectors,
+		AuditLog:             process.auditLog,
+		CipherSuites:         cfg.CipherSuites,
+	})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	process.setLocalAuth(authServer)
+
+	connector, err := process.connectToAuthService(teleport.RoleAdmin)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	// second, create the API Server: it's actually a collection of API servers,
+	// each serving requests for a "role" which is assigned to every connected
+	// client based on their certificate (user, server, admin, etc)
+	sessionService, err := session.New(b)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	authorizer, err := auth.NewAuthorizer(authServer.Access, authServer.Identity, authServer.Trust)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	apiConf := &auth.APIConfig{
+		AuthServer:     authServer,
+		SessionService: sessionService,
+		Authorizer:     authorizer,
+		AuditLog:       process.auditLog,
+	}
+
+	var authCache auth.AuthCache
+	if process.Config.CachePolicy.Enabled {
+		cache, err := process.newAccessCache(accessCacheConfig{
+			services:  authServer.AuthServices,
+			setup:     cache.ForAuth,
+			cacheName: []string{teleport.ComponentAuth},
+			inMemory:  true,
+			events:    true,
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		authCache = cache
+	} else {
+		authCache = authServer.AuthServices
+	}
+	authServer.SetCache(authCache)
+
+	log := logrus.WithFields(logrus.Fields{
+		trace.Component: teleport.Component(teleport.ComponentAuth, process.id),
+	})
+
+	// Register TLS endpoint of the auth service
+	tlsConfig, err := connector.ServerIdentity.TLSConfig(cfg.CipherSuites)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	tlsServer, err := auth.NewTLSServerAlt(auth.TLSServerConfig{
+		TLS:           tlsConfig,
+		APIConfig:     *apiConf,
+		LimiterConfig: cfg.Auth.Limiter,
+		AccessPoint:   authCache,
+		Component:     teleport.Component(teleport.ComponentAuth, process.id),
+	})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// auth server listens on SSH and TLS, reusing the same socket
+	listener, err := process.importOrCreateListener(teleport.ComponentAuth, cfg.Auth.SSHAddr.Addr)
+	if err != nil {
+		log.Errorf("PID: %v Failed to bind to address %v: %v, exiting.", os.Getpid(), cfg.Auth.SSHAddr.Addr, err)
+		return trace.Wrap(err)
+	}
+	// clean up unused descriptors passed for proxy, but not used by it
+	warnOnErr(process.closeImportedDescriptors(teleport.ComponentAuth))
+	if cfg.Auth.EnableProxyProtocol {
+		log.Infof("Starting Auth service with PROXY protocol support.")
+	}
+	mux, err := multiplexer.New(multiplexer.Config{
+		EnableProxyProtocol: cfg.Auth.EnableProxyProtocol,
+		Listener:            listener,
+		ID:                  teleport.Component(process.id),
+	})
+	if err != nil {
+		listener.Close()
+		return trace.Wrap(err)
+	}
+	go mux.Serve()
 	process.RegisterCriticalFunc("auth.tls", func() error {
 		utils.Consolef(cfg.Console, teleport.ComponentAuth, "Auth service %s:%s is starting on %v.", teleport.Version, teleport.Gitref, cfg.Auth.SSHAddr.Addr)
 
@@ -1380,6 +1877,226 @@ func (process *TeleportProcess) proxyPublicAddr() utils.NetAddr {
 	return process.Config.Proxy.PublicAddrs[0]
 }
 
+func (process *TeleportProcessAlt) initSSH() error {
+
+	process.registerWithAuthServer(teleport.RoleNode, SSHIdentityEvent)
+	eventsC := make(chan Event)
+	process.WaitForEvent(process.ExitContext(), SSHIdentityEvent, eventsC)
+
+	log := logrus.WithFields(logrus.Fields{
+		trace.Component: teleport.Component(teleport.ComponentNode, process.id),
+	})
+
+	var agentPool *reversetunnel.AgentPool
+	var conn *Connector
+	var ebpf bpf.BPF
+	var s *regular.Server
+
+	process.RegisterCriticalFunc("ssh.node", func() error {
+		var ok bool
+		var event Event
+
+		select {
+		case event = <-eventsC:
+			log.Debugf("Received event %q.", event.Name)
+		case <-process.ExitContext().Done():
+			log.Debugf("Process is exiting.")
+			return nil
+		}
+
+		conn, ok = (event.Payload).(*Connector)
+		if !ok {
+			return trace.BadParameter("unsupported connector type: %T", event.Payload)
+		}
+
+		cfg := process.Config
+
+		limiter, err := limiter.NewLimiter(cfg.SSH.Limiter)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		authClient, err := process.newLocalCache(conn.Client, cache.ForNode, []string{teleport.ComponentNode})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		// If session recording is disabled at the cluster level and the node is
+		// attempting to enabled enhanced session recording, show an error.
+		clusterConfig, err := authClient.GetClusterConfig()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if clusterConfig.GetSessionRecording() == services.RecordOff &&
+			cfg.SSH.BPF.Enabled == true {
+			return trace.BadParameter("session recording is disabled at the cluster " +
+				"level. To enable enhanced session recording, enable session recording at " +
+				"the cluster level, then restart Teleport.")
+		}
+
+		// If BPF is enabled in file configuration, but the operating system does
+		// not support enhanced session recording (like macOS), exit right away.
+		if cfg.SSH.BPF.Enabled && !bpf.SystemHasBPF() {
+			return trace.BadParameter("operating system does not support enhanced " +
+				"session recording, check Teleport documentation for more details on " +
+				"supported operating systems, kernels, and configuration")
+		}
+
+		// Start BPF programs. This is blocking and if the BPF programs fail to
+		// load, the node will not start. If BPF is not enabled, this will simply
+		// return a NOP struct that can be used to discard BPF data.
+		ebpf, err = bpf.New(cfg.SSH.BPF)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		// make sure the namespace exists
+		namespace := services.ProcessNamespace(cfg.SSH.Namespace)
+		_, err = authClient.GetNamespace(namespace)
+		if err != nil {
+			if trace.IsNotFound(err) {
+				return trace.NotFound(
+					"namespace %v is not found, ask your system administrator to create this namespace so you can register nodes there.", namespace)
+			}
+			return trace.Wrap(err)
+		}
+
+		// Provide helpful log message if listen_addr or public_addr are not being
+		// used (tunnel is used to connect to cluster).
+		//
+		// If a tunnel is not being used, set the default here (could not be done in
+		// file configuration because at that time it's not known if server is
+		// joining cluster directly or through a tunnel).
+		if conn.UseTunnel() {
+			if !cfg.SSH.Addr.IsEmpty() {
+				log.Info("Connected to cluster over tunnel connection, ignoring listen_addr setting.")
+			}
+			if len(cfg.SSH.PublicAddrs) > 0 {
+				log.Info("Connected to cluster over tunnel connection, ignoring public_addr setting.")
+			}
+		}
+		if !conn.UseTunnel() && cfg.SSH.Addr.IsEmpty() {
+			cfg.SSH.Addr = *defaults.SSHServerListenAddr()
+		}
+
+		s, err = regular.New(cfg.SSH.Addr,
+			cfg.Hostname,
+			[]ssh.Signer{conn.ServerIdentity.KeySigner},
+			authClient,
+			cfg.DataDir,
+			cfg.AdvertiseIP,
+			process.proxyPublicAddr(),
+			regular.SetLimiter(limiter),
+			regular.SetShell(cfg.SSH.Shell),
+			regular.SetAuditLog(conn.Client),
+			regular.SetSessionServer(conn.Client),
+			regular.SetLabels(cfg.SSH.Labels, cfg.SSH.CmdLabels),
+			regular.SetNamespace(namespace),
+			regular.SetPermitUserEnvironment(cfg.SSH.PermitUserEnvironment),
+			regular.SetCiphers(cfg.Ciphers),
+			regular.SetKEXAlgorithms(cfg.KEXAlgorithms),
+			regular.SetMACAlgorithms(cfg.MACAlgorithms),
+			regular.SetPAMConfig(cfg.SSH.PAM),
+			regular.SetRotationGetter(process.getRotation),
+			regular.SetUseTunnel(conn.UseTunnel()),
+			regular.SetFIPS(cfg.FIPS),
+			regular.SetBPF(ebpf),
+		)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		// init uploader service for recording SSH node, if proxy is not
+		// enabled on this node, because proxy stars uploader service as well
+		if !cfg.Proxy.Enabled {
+			if err := process.initUploaderService(authClient, conn.Client); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+
+		if !conn.UseTunnel() {
+			listener, err := process.importOrCreateListener(teleport.ComponentNode, cfg.SSH.Addr.Addr)
+			if err != nil {
+				return trace.Wrap(err)
+			}
+			// clean up unused descriptors passed for proxy, but not used by it
+			warnOnErr(process.closeImportedDescriptors(teleport.ComponentNode))
+
+			log.Infof("Service %s:%s is starting on %v %v.", teleport.Version, teleport.Gitref, cfg.SSH.Addr.Addr, process.Config.CachePolicy)
+			utils.Consolef(cfg.Console, teleport.ComponentNode, "Service %s:%s is starting on %v.", teleport.Version, teleport.Gitref, cfg.SSH.Addr.Addr)
+
+			// Start the SSH server. This kicks off updating labels, starting the
+			// heartbeat, and accepting connections.
+			go s.Serve(listener)
+
+			// Broadcast that the node has started.
+			process.BroadcastEvent(Event{Name: NodeSSHReady, Payload: nil})
+		} else {
+			// Start the SSH server. This kicks off updating labels and starting the
+			// heartbeat.
+			s.Start()
+
+			// Create and start an agent pool.
+			agentPool, err = reversetunnel.NewAgentPool(reversetunnel.AgentPoolConfig{
+				Component:   teleport.ComponentNode,
+				HostUUID:    conn.ServerIdentity.ID.HostUUID,
+				ProxyAddr:   conn.TunnelProxy(),
+				Client:      conn.Client,
+				AccessPoint: conn.Client,
+				HostSigners: []ssh.Signer{conn.ServerIdentity.KeySigner},
+				Cluster:     conn.ServerIdentity.Cert.Extensions[utils.CertExtensionAuthority],
+				Server:      s,
+			})
+			if err != nil {
+				return trace.Wrap(err)
+			}
+
+			err = agentPool.Start()
+			if err != nil {
+				return trace.Wrap(err)
+			}
+			log.Infof("Service is starting in tunnel mode.")
+
+			// Broadcast that the node has started.
+			process.BroadcastEvent(Event{Name: NodeSSHReady, Payload: nil})
+		}
+
+		// Block and wait while the node is running.
+		s.Wait()
+		if conn.UseTunnel() {
+			agentPool.Wait()
+		}
+
+		log.Infof("Exited.")
+		return nil
+	})
+
+	// Execute this when process is asked to exit.
+	process.onExit("ssh.shutdown", func(payload interface{}) {
+		if payload == nil {
+			log.Infof("Shutting down immediately.")
+			if s != nil {
+				warnOnErr(s.Close())
+			}
+		} else {
+			log.Infof("Shutting down gracefully.")
+			if s != nil {
+				warnOnErr(s.Shutdown(payloadContext(payload)))
+			}
+		}
+		if conn.UseTunnel() {
+			agentPool.Stop()
+		}
+
+		// Close BPF service.
+		warnOnErr(ebpf.Close())
+
+		log.Infof("Exited.")
+	})
+
+	return nil
+}
+
 // initSSH initializes the "node" role, i.e. a simple SSH server connected to the auth server.
 func (process *TeleportProcess) initSSH() error {
 
@@ -1599,6 +2316,25 @@ func (process *TeleportProcess) initSSH() error {
 	})
 
 	return nil
+}
+
+func (process *TeleportProcessAlt) registerWithAuthServer(role teleport.Role, eventName string) {
+	serviceName := strings.ToLower(role.String())
+	process.RegisterCriticalFunc(fmt.Sprintf("register.%v", serviceName), func() error {
+		connector, err := process.reconnectToAuthService(role)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		process.onExit(fmt.Sprintf("auth.client.%v", serviceName), func(interface{}) {
+			process.Debugf("Closed client for %v.", role)
+			err := connector.Client.Close()
+			if err != nil {
+				process.Debugf("Failed to close client: %v", err)
+			}
+		})
+		process.BroadcastEvent(Event{Name: eventName, Payload: connector})
+		return nil
+	})
 }
 
 // registerWithAuthServer uses one time provisioning token obtained earlier

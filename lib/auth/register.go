@@ -60,6 +60,11 @@ func LocalRegister(id IdentityID, authServer *AuthServer, additionalPrincipals, 
 	return identity, nil
 }
 
+type RegisterParamsCert struct {
+	*RegisterParams
+	IBCert []byte
+}
+
 // RegisterParams specifies parameters
 // for first time register operation with auth server
 type RegisterParams struct {
@@ -111,9 +116,7 @@ func Register(params RegisterParams) (*Identity, error) {
 
 	// Attempt to register through the auth server, if it fails, try and
 	// register through the proxy server.
-	log.Errorf("!!! Register - registerThroughAuth")
 	ident, err := registerThroughAuth(token, params)
-	return nil, trace.Wrap(err)
 	if err != nil {
 		// If no params client was set this is a proxy and fail right away.
 		if params.GetHostCredentials == nil {
@@ -122,6 +125,41 @@ func Register(params RegisterParams) (*Identity, error) {
 		}
 
 		ident, err = registerThroughProxy(token, params)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+
+		log.Debugf("Successfully registered through proxy server.")
+		return ident, nil
+	}
+
+	log.Debugf("Successfully registered through auth server.")
+	return ident, nil
+}
+
+// Register is used to generate host keys when a node or proxy are running on
+// different hosts than the auth server. This method requires provisioning
+// tokens to prove a valid auth server was used to issue the joining request
+// as well as a method for the node to validate the auth server.
+func RegisterCert(params RegisterParamsCert) (*Identity, error) {
+	// Read in the token. The token can either be passed in or come from a file
+	// on disk.
+	token, err := utils.ReadToken(params.Token)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	// Attempt to register through the auth server, if it fails, try and
+	// register through the proxy server.
+	ident, err := registerThroughCert(token, params)
+	if err != nil {
+		// If no params client was set this is a proxy and fail right away.
+		if params.GetHostCredentials == nil {
+			log.Debugf("Missing client, failing with error from Auth Server: %v.", err)
+			return nil, trace.Wrap(err)
+		}
+
+		ident, err = registerThroughProxy(token, *params.RegisterParams)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -164,8 +202,54 @@ func registerThroughProxy(token string, params RegisterParams) (*Identity, error
 }
 
 // registerThroughAuth is used to register through the auth server.
+func registerThroughCert(token string, params RegisterParamsCert) (*Identity, error) {
+	log.Debugf("[registerThroughCert] Attempting to register through auth server.")
+
+	var client *Client
+	var err error
+
+	// Build a client to the Auth Server. If a CA pin is specified require the
+	// Auth Server is validated. Otherwise attempt to use the CA file on disk
+	// but if it's not available connect without validating the Auth Server CA.
+	switch {
+	case params.CAPin != "":
+		client, err = pinRegisterClient(*params.RegisterParams)
+	default:
+		client, err = insecureRegisterClient(*params.RegisterParams)
+	}
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	defer client.Close()
+
+	// Get the SSH and X509 certificates for a node.
+
+	altClient := &ClientAlt{client}
+
+	keys, err := altClient.RegisterUsingCert(RegisterUsingCertRequest{
+		RegisterUsingTokenRequest: &RegisterUsingTokenRequest{
+			Token:                token,
+			HostID:               params.ID.HostUUID,
+			NodeName:             params.ID.NodeName,
+			Role:                 params.ID.Role,
+			AdditionalPrincipals: params.AdditionalPrincipals,
+			DNSNames:             params.DNSNames,
+			PublicTLSKey:         params.PublicTLSKey,
+			PublicSSHKey:         params.PublicSSHKey,
+		},
+		IBCert: params.IBCert,
+	})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	keys.Key = params.PrivateKey
+
+	return ReadIdentityFromKeyPair(keys)
+}
+
+// registerThroughAuth is used to register through the auth server.
 func registerThroughAuth(token string, params RegisterParams) (*Identity, error) {
-	log.Error("Attempting to register through auth server. *Cert*")
+	log.Debugf("Attempting to register through auth server.")
 
 	var client *Client
 	var err error
@@ -185,8 +269,7 @@ func registerThroughAuth(token string, params RegisterParams) (*Identity, error)
 	defer client.Close()
 
 	// Get the SSH and X509 certificates for a node.
-	log.Error("*** RegisterUsingCert in registerThroughAuth")
-	keys, err := client.RegisterUsingCert(RegisterUsingTokenRequest{
+	keys, err := client.RegisterUsingToken(RegisterUsingTokenRequest{
 		Token:                token,
 		HostID:               params.ID.HostUUID,
 		NodeName:             params.ID.NodeName,
@@ -261,7 +344,6 @@ func readCA(params RegisterParams) (*x509.Certificate, error) {
 // validate the certificate presented. If both conditions hold true, then we
 // know we are connecting to the expected Auth Server.
 func pinRegisterClient(params RegisterParams) (*Client, error) {
-	log.Error("**** pinRegisterClient")
 	// Build a insecure client to the Auth Server. This is safe because even if
 	// an attacker were to MITM this connection the CA pin will not match below.
 	tlsConfig := utils.TLSConfig(params.CipherSuites)

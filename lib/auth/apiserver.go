@@ -52,6 +52,11 @@ type APIConfig struct {
 	Authorizer     Authorizer
 }
 
+// APIServerAlt implements http API server for AuthServer interface
+type APIServerAlt struct {
+	*APIServer
+}
+
 // APIServer implements http API server for AuthServer interface
 type APIServer struct {
 	APIConfig
@@ -61,6 +66,7 @@ type APIServer struct {
 
 // NewAPIServer returns a new instance of APIServer HTTP handler
 func NewAPIServer(config *APIConfig) http.Handler {
+	log.Errorf("[NewAPIServer] start")
 	srv := APIServer{
 		APIConfig: *config,
 		Clock:     clockwork.NewRealClock(),
@@ -153,7 +159,201 @@ func NewAPIServer(config *APIConfig) http.Handler {
 	srv.POST("/:version/tokens/register", srv.withAuth(srv.registerUsingToken))
 	srv.POST("/:version/tokens/register/auth", srv.withAuth(srv.registerNewAuthServer))
 
+	// active sesssions
+	srv.POST("/:version/namespaces/:namespace/sessions", srv.withAuth(srv.createSession))
+	srv.PUT("/:version/namespaces/:namespace/sessions/:id", srv.withAuth(srv.updateSession))
+	srv.DELETE("/:version/namespaces/:namespace/sessions/:id", srv.withAuth(srv.deleteSession))
+	srv.GET("/:version/namespaces/:namespace/sessions", srv.withAuth(srv.getSessions))
+	srv.GET("/:version/namespaces/:namespace/sessions/:id", srv.withAuth(srv.getSession))
+	srv.POST("/:version/namespaces/:namespace/sessions/:id/slice", srv.withAuth(srv.postSessionSlice))
+	srv.POST("/:version/namespaces/:namespace/sessions/:id/recording", srv.withAuth(srv.uploadSessionRecording))
+	srv.GET("/:version/namespaces/:namespace/sessions/:id/stream", srv.withAuth(srv.getSessionChunk))
+	srv.GET("/:version/namespaces/:namespace/sessions/:id/events", srv.withAuth(srv.getSessionEvents))
+
+	// Namespaces
+	srv.POST("/:version/namespaces", srv.withAuth(srv.upsertNamespace))
+	srv.GET("/:version/namespaces", srv.withAuth(srv.getNamespaces))
+	srv.GET("/:version/namespaces/:namespace", srv.withAuth(srv.getNamespace))
+	srv.DELETE("/:version/namespaces/:namespace", srv.withAuth(srv.deleteNamespace))
+
+	// Roles
+	srv.POST("/:version/roles", srv.withAuth(srv.upsertRole))
+	srv.GET("/:version/roles", srv.withAuth(srv.getRoles))
+	srv.GET("/:version/roles/:role", srv.withAuth(srv.getRole))
+	srv.DELETE("/:version/roles/:role", srv.withAuth(srv.deleteRole))
+
+	// cluster configuration
+	srv.GET("/:version/configuration", srv.withAuth(srv.getClusterConfig))
+	srv.POST("/:version/configuration", srv.withAuth(srv.setClusterConfig))
+	srv.GET("/:version/configuration/name", srv.withAuth(srv.getClusterName))
+	srv.POST("/:version/configuration/name", srv.withAuth(srv.setClusterName))
+	srv.GET("/:version/configuration/static_tokens", srv.withAuth(srv.getStaticTokens))
+	srv.DELETE("/:version/configuration/static_tokens", srv.withAuth(srv.deleteStaticTokens))
+	srv.POST("/:version/configuration/static_tokens", srv.withAuth(srv.setStaticTokens))
+	srv.GET("/:version/authentication/preference", srv.withAuth(srv.getClusterAuthPreference))
+	srv.POST("/:version/authentication/preference", srv.withAuth(srv.setClusterAuthPreference))
+
+	// OIDC
+	srv.POST("/:version/oidc/connectors", srv.withAuth(srv.upsertOIDCConnector))
+	srv.GET("/:version/oidc/connectors", srv.withAuth(srv.getOIDCConnectors))
+	srv.GET("/:version/oidc/connectors/:id", srv.withAuth(srv.getOIDCConnector))
+	srv.DELETE("/:version/oidc/connectors/:id", srv.withAuth(srv.deleteOIDCConnector))
+	srv.POST("/:version/oidc/requests/create", srv.withAuth(srv.createOIDCAuthRequest))
+	srv.POST("/:version/oidc/requests/validate", srv.withAuth(srv.validateOIDCAuthCallback))
+
+	// SAML handlers
+	srv.POST("/:version/saml/connectors", srv.withAuth(srv.createSAMLConnector))
+	srv.PUT("/:version/saml/connectors", srv.withAuth(srv.upsertSAMLConnector))
+	srv.GET("/:version/saml/connectors", srv.withAuth(srv.getSAMLConnectors))
+	srv.GET("/:version/saml/connectors/:id", srv.withAuth(srv.getSAMLConnector))
+	srv.DELETE("/:version/saml/connectors/:id", srv.withAuth(srv.deleteSAMLConnector))
+	srv.POST("/:version/saml/requests/create", srv.withAuth(srv.createSAMLAuthRequest))
+	srv.POST("/:version/saml/requests/validate", srv.withAuth(srv.validateSAMLResponse))
+
+	// Github connector
+	srv.POST("/:version/github/connectors", srv.withAuth(srv.createGithubConnector))
+	srv.PUT("/:version/github/connectors", srv.withAuth(srv.upsertGithubConnector))
+	srv.GET("/:version/github/connectors", srv.withAuth(srv.getGithubConnectors))
+	srv.GET("/:version/github/connectors/:id", srv.withAuth(srv.getGithubConnector))
+	srv.DELETE("/:version/github/connectors/:id", srv.withAuth(srv.deleteGithubConnector))
+	srv.POST("/:version/github/requests/create", srv.withAuth(srv.createGithubAuthRequest))
+	srv.POST("/:version/github/requests/validate", srv.withAuth(srv.validateGithubAuthCallback))
+
+	// U2F
+	srv.GET("/:version/u2f/signuptokens/:token", srv.withAuth(srv.getSignupU2FRegisterRequest))
+	srv.POST("/:version/u2f/users", srv.withAuth(srv.createUserWithU2FToken))
+	srv.POST("/:version/u2f/users/:user/sign", srv.withAuth(srv.u2fSignRequest))
+	srv.GET("/:version/u2f/appid", srv.withAuth(srv.getU2FAppID))
+
+	// Provisioning tokens
+	srv.GET("/:version/tokens", srv.withAuth(srv.getTokens))
+	srv.GET("/:version/tokens/:token", srv.withAuth(srv.getToken))
+	srv.DELETE("/:version/tokens/:token", srv.withAuth(srv.deleteToken))
+
+	// Audit logs AKA events
+	srv.POST("/:version/events", srv.withAuth(srv.emitAuditEvent))
+	srv.GET("/:version/events", srv.withAuth(srv.searchEvents))
+	srv.GET("/:version/events/session", srv.withAuth(srv.searchSessionEvents))
+
+	plugin := GetPlugin()
+	if plugin != nil {
+		log.Errorf("[NewAPIServer] plugin %v", plugin)
+		plugin.AddHandlers(&srv)
+	}
+
+	log.Errorf("[NewAPIServer] finish %v", plugin)
+	return httplib.RewritePaths(&srv.Router,
+		httplib.Rewrite("/v1/nodes", "/v1/namespaces/default/nodes"),
+		httplib.Rewrite("/v1/sessions", "/v1/namespaces/default/sessions"),
+		httplib.Rewrite("/v1/sessions/([^/]+)/(.*)", "/v1/namespaces/default/sessions/$1/$2"),
+	)
+}
+
+// NewAPIServerAlt returns a new instance of APIServer HTTP handler
+func NewAPIServerAlt(config *APIConfig) http.Handler {
+	log.Errorf("[NewAPIServerAlt] start")
+	srv := APIServerAlt{
+		&APIServer{
+			APIConfig: *config,
+			Clock:     clockwork.NewRealClock(),
+		},
+	}
+	srv.Router = *httprouter.New()
+	// srv := APIServer{
+	// 	APIConfig: *config,
+	// 	Clock:     clockwork.NewRealClock(),
+	// }
+	// srv.Router = *httprouter.New()
+
+	// Kubernetes extensions
+	srv.POST("/:version/kube/csr", srv.withAuth(srv.processKubeCSR))
+
+	// Operations on certificate authorities
+	srv.GET("/:version/domain", srv.withAuth(srv.getDomainName))
+	srv.GET("/:version/cacert", srv.withAuth(srv.getClusterCACert))
+
+	srv.POST("/:version/authorities/:type", srv.withAuth(srv.upsertCertAuthority))
+	srv.POST("/:version/authorities/:type/rotate", srv.withAuth(srv.rotateCertAuthority))
+	srv.POST("/:version/authorities/:type/rotate/external", srv.withAuth(srv.rotateExternalCertAuthority))
+	srv.DELETE("/:version/authorities/:type/:domain", srv.withAuth(srv.deleteCertAuthority))
+	srv.GET("/:version/authorities/:type/:domain", srv.withAuth(srv.getCertAuthority))
+	srv.GET("/:version/authorities/:type", srv.withAuth(srv.getCertAuthorities))
+
+	// Generating certificates for user and host authorities
+	srv.POST("/:version/ca/host/certs", srv.withAuth(srv.generateHostCert))
+	srv.POST("/:version/ca/user/certs", srv.withAuth(srv.generateUserCert)) // DELETE IN: 4.2.0
+
+	// Operations on users
+	srv.GET("/:version/users", srv.withAuth(srv.getUsers))
+	srv.GET("/:version/users/:user", srv.withAuth(srv.getUser))
+	srv.DELETE("/:version/users/:user", srv.withAuth(srv.deleteUser))
+
+	// Generating keypairs
+	srv.POST("/:version/keypair", srv.withAuth(srv.generateKeyPair))
+
+	// Passwords and sessions
+	srv.POST("/:version/users", srv.withAuth(srv.upsertUser))
+	srv.PUT("/:version/users/:user/web/password", srv.withAuth(srv.changePassword))
+	srv.POST("/:version/users/:user/web/password", srv.withAuth(srv.upsertPassword))
+	srv.POST("/:version/users/:user/web/password/check", srv.withRate(srv.withAuth(srv.checkPassword)))
+	srv.POST("/:version/users/:user/web/sessions", srv.withAuth(srv.createWebSession))
+	srv.POST("/:version/users/:user/web/authenticate", srv.withAuth(srv.authenticateWebUser))
+	srv.POST("/:version/users/:user/ssh/authenticate", srv.withAuth(srv.authenticateSSHUser))
+	srv.GET("/:version/users/:user/web/sessions/:sid", srv.withAuth(srv.getWebSession))
+	srv.DELETE("/:version/users/:user/web/sessions/:sid", srv.withAuth(srv.deleteWebSession))
+	srv.GET("/:version/signuptokens/:token", srv.withAuth(srv.getSignupTokenData))
+	srv.POST("/:version/signuptokens/users", srv.withAuth(srv.createUserWithToken))
+	srv.POST("/:version/signuptokens", srv.withAuth(srv.createSignupToken))
+
+	// Servers and presence heartbeat
+	srv.POST("/:version/namespaces/:namespace/nodes", srv.withAuth(srv.upsertNode))
+	srv.POST("/:version/namespaces/:namespace/nodes/keepalive", srv.withAuth(srv.keepAliveNode))
+	srv.PUT("/:version/namespaces/:namespace/nodes", srv.withAuth(srv.upsertNodes))
+	srv.GET("/:version/namespaces/:namespace/nodes", srv.withAuth(srv.getNodes))
+	srv.DELETE("/:version/namespaces/:namespace/nodes", srv.withAuth(srv.deleteAllNodes))
+	srv.DELETE("/:version/namespaces/:namespace/nodes/:name", srv.withAuth(srv.deleteNode))
+	srv.POST("/:version/authservers", srv.withAuth(srv.upsertAuthServer))
+	srv.GET("/:version/authservers", srv.withAuth(srv.getAuthServers))
+	srv.POST("/:version/proxies", srv.withAuth(srv.upsertProxy))
+	srv.GET("/:version/proxies", srv.withAuth(srv.getProxies))
+	srv.DELETE("/:version/proxies", srv.withAuth(srv.deleteAllProxies))
+	srv.DELETE("/:version/proxies/:name", srv.withAuth(srv.deleteProxy))
+	srv.POST("/:version/tunnelconnections", srv.withAuth(srv.upsertTunnelConnection))
+	srv.GET("/:version/tunnelconnections/:cluster", srv.withAuth(srv.getTunnelConnections))
+	srv.GET("/:version/tunnelconnections", srv.withAuth(srv.getAllTunnelConnections))
+	srv.DELETE("/:version/tunnelconnections/:cluster/:conn", srv.withAuth(srv.deleteTunnelConnection))
+	srv.DELETE("/:version/tunnelconnections/:cluster", srv.withAuth(srv.deleteTunnelConnections))
+	srv.DELETE("/:version/tunnelconnections", srv.withAuth(srv.deleteAllTunnelConnections))
+
+	// Server Credentials
+	srv.POST("/:version/server/credentials", srv.withAuth(srv.generateServerKeys))
+
+	srv.POST("/:version/remoteclusters", srv.withAuth(srv.createRemoteCluster))
+	srv.GET("/:version/remoteclusters/:cluster", srv.withAuth(srv.getRemoteCluster))
+	srv.GET("/:version/remoteclusters", srv.withAuth(srv.getRemoteClusters))
+	srv.DELETE("/:version/remoteclusters/:cluster", srv.withAuth(srv.deleteRemoteCluster))
+	srv.DELETE("/:version/remoteclusters", srv.withAuth(srv.deleteAllRemoteClusters))
+
+	// Reverse tunnels
+	srv.POST("/:version/reversetunnels", srv.withAuth(srv.upsertReverseTunnel))
+	srv.GET("/:version/reversetunnels", srv.withAuth(srv.getReverseTunnels))
+	srv.DELETE("/:version/reversetunnels/:domain", srv.withAuth(srv.deleteReverseTunnel))
+
+	// trusted clusters
+	srv.POST("/:version/trustedclusters", srv.withAuth(srv.upsertTrustedCluster))
+	srv.POST("/:version/trustedclusters/validate", srv.withAuth(srv.validateTrustedCluster))
+	srv.GET("/:version/trustedclusters", srv.withAuth(srv.getTrustedClusters))
+	srv.GET("/:version/trustedclusters/:name", srv.withAuth(srv.getTrustedCluster))
+	srv.DELETE("/:version/trustedclusters/:name", srv.withAuth(srv.deleteTrustedCluster))
+
+	// Tokens
+	srv.POST("/:version/tokens", srv.withAuth(srv.generateToken))
+	srv.POST("/:version/tokens/register", srv.withAuth(srv.registerUsingToken))
+	srv.POST("/:version/tokens/register/auth", srv.withAuth(srv.registerNewAuthServer))
+
+	// ibCert
 	srv.POST("/:version/ibcert/register", srv.withAuth(srv.registerUsingCert))
+	//srv.POST("/:version/ibcert/register", srv.withAuth(srv.registerUsingToken))
 
 	// active sesssions
 	srv.POST("/:version/namespaces/:namespace/sessions", srv.withAuth(srv.createSession))
@@ -231,10 +431,6 @@ func NewAPIServer(config *APIConfig) http.Handler {
 	srv.GET("/:version/events", srv.withAuth(srv.searchEvents))
 	srv.GET("/:version/events/session", srv.withAuth(srv.searchSessionEvents))
 
-	if plugin := GetPlugin(); plugin != nil {
-		plugin.AddHandlers(&srv)
-	}
-
 	return httplib.RewritePaths(&srv.Router,
 		httplib.Rewrite("/v1/nodes", "/v1/namespaces/default/nodes"),
 		httplib.Rewrite("/v1/sessions", "/v1/namespaces/default/sessions"),
@@ -246,6 +442,44 @@ func NewAPIServer(config *APIConfig) http.Handler {
 type HandlerWithAuthFunc func(auth ClientI, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error)
 
 func (s *APIServer) withAuth(handler HandlerWithAuthFunc) httprouter.Handle {
+	const accessDeniedMsg = "auth API: access denied "
+	return httplib.MakeHandler(func(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
+		// HTTPS server expects auth  context to be set by the auth middleware
+		authContext, err := s.Authorizer.Authorize(r.Context())
+		if err != nil {
+			// propagate connection problem error so we can differentiate
+			// between connection failed and access denied
+			if trace.IsConnectionProblem(err) {
+				return nil, trace.ConnectionProblem(err, "[07] failed to connect to the database")
+			} else if trace.IsAccessDenied(err) {
+				// don't print stack trace, just log the warning
+				log.Warn(err)
+			} else {
+				log.Warn(trace.DebugReport(err))
+			}
+
+			return nil, trace.AccessDenied(accessDeniedMsg + "[00]")
+		}
+		auth := &AuthWithRoles{
+			authServer: s.AuthServer,
+			user:       authContext.User,
+			checker:    authContext.Checker,
+			identity:   authContext.Identity,
+			sessions:   s.SessionService,
+			alog:       s.AuthServer.IAuditLog,
+		}
+		version := p.ByName("version")
+		if version == "" {
+			return nil, trace.BadParameter("missing version")
+		}
+		return handler(auth, w, r, p, version)
+	})
+}
+
+// HandlerWithAuthFunc is http handler with passed auth context
+type HandlerWithAuthFuncAlt func(auth ClientIAlt, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error)
+
+func (s *APIServerAlt) withAuthAlt(handler HandlerWithAuthFuncAlt) httprouter.Handle {
 	const accessDeniedMsg = "auth API: access denied "
 	return httplib.MakeHandler(func(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
 		// HTTPS server expects auth  context to be set by the auth middleware
@@ -986,9 +1220,8 @@ func (s *APIServer) registerUsingToken(auth ClientI, w http.ResponseWriter, r *h
 	return keys, nil
 }
 
-func (s *APIServer) registerUsingCert(auth ClientI, w http.ResponseWriter, r *http.Request, _ httprouter.Params, version string) (interface{}, error) {
-	log.Error("!!! API registerUsingCert Cloud")
-
+func (s *APIServerAlt) registerUsingCert(auth ClientI, w http.ResponseWriter, r *http.Request, _ httprouter.Params, version string) (interface{}, error) {
+	log.Errorf("[registerUsingCert] start")
 	var req RegisterUsingTokenRequest
 	if err := httplib.ReadJSON(r, &req); err != nil {
 		return nil, trace.Wrap(err)
@@ -997,7 +1230,8 @@ func (s *APIServer) registerUsingCert(auth ClientI, w http.ResponseWriter, r *ht
 	// Pass along the remote address the request came from to the registration function.
 	req.RemoteAddr = r.RemoteAddr
 
-	keys, err := auth.RegisterUsingCert(req)
+	log.Errorf("[registerUsingCert] auth func")
+	keys, err := auth.RegisterUsingToken(req)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

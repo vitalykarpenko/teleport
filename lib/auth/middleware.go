@@ -87,7 +87,6 @@ type TLSServer struct {
 
 // NewTLSServer returns new unstarted TLS server
 func NewTLSServer(cfg TLSServerConfig) (*TLSServer, error) {
-	log.Errorf("$$$ NewTLSServer")
 	if err := cfg.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -125,6 +124,45 @@ func NewTLSServer(cfg TLSServerConfig) (*TLSServer, error) {
 	return server, nil
 }
 
+// NewTLSServerAlt returns new unstarted TLS server
+func NewTLSServerAlt(cfg TLSServerConfig) (*TLSServer, error) {
+	if err := cfg.CheckAndSetDefaults(); err != nil {
+		return nil, trace.Wrap(err)
+	}
+	// limiter limits requests by frequency and amount of simultaneous
+	// connections per client
+	limiter, err := limiter.NewLimiter(cfg.LimiterConfig)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	// authMiddleware authenticates request assuming TLS client authentication
+	// adds authentication information to the context
+	// and passes it to the API server
+	authMiddleware := &AuthMiddleware{
+		AccessPoint:   cfg.AccessPoint,
+		AcceptedUsage: cfg.AcceptedUsage,
+	}
+	authMiddleware.Wrap(NewGRPCServerALt(cfg.APIConfig))
+	// Wrap sets the next middleware in chain to the authMiddleware
+	limiter.WrapHandle(authMiddleware)
+	// force client auth if given
+	cfg.TLS.ClientAuth = tls.VerifyClientCertIfGiven
+	cfg.TLS.NextProtos = []string{http2.NextProtoTLS}
+
+	server := &TLSServer{
+		TLSServerConfig: cfg,
+		Server: &http.Server{
+			Handler:           limiter,
+			ReadHeaderTimeout: defaults.DefaultDialTimeout,
+		},
+		Entry: logrus.WithFields(logrus.Fields{
+			trace.Component: cfg.Component,
+		}),
+	}
+	server.TLS.GetConfigForClient = server.GetConfigForClient
+	return server, nil
+}
+
 // Serve takes TCP listener, upgrades to TLS using config and starts serving
 func (t *TLSServer) Serve(listener net.Listener) error {
 	return t.Server.Serve(tls.NewListener(listener, t.TLS))
@@ -134,12 +172,6 @@ func (t *TLSServer) Serve(listener net.Listener) error {
 // and server's GetConfigForClient reloads the list of trusted
 // local and remote certificate authorities
 func (t *TLSServer) GetConfigForClient(info *tls.ClientHelloInfo) (*tls.Config, error) {
-
-	// if _, err := os.Stat("debug"); !os.IsNotExist(err) {
-	// 	panic("!GetConfigForClient")
-	// }
-	log.Errorf("!!! GetConfigForClient: %#v", *info)
-
 	var clusterName string
 	var err error
 	if info.ServerName != "" {
@@ -168,9 +200,8 @@ func (t *TLSServer) GetConfigForClient(info *tls.ClientHelloInfo) (*tls.Config, 
 	}
 	tlsCopy := t.TLS.Clone()
 	tlsCopy.ClientCAs = pool
-	for idx, cert := range tlsCopy.Certificates {
+	for _, cert := range tlsCopy.Certificates {
 		t.Debugf("Server certificate %v.", TLSCertInfo(&cert))
-		t.Errorf("!!! Server certificate %d", idx)
 	}
 	return tlsCopy, nil
 }
@@ -326,7 +357,6 @@ func (a *AuthMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ClientCertPool returns trusted x509 cerificate authority pool
 func ClientCertPool(client AccessCache, clusterName string) (*x509.CertPool, error) {
-	log.Errorf("!!! returns trusted x509 cerificate authority pool")
 	pool := x509.NewCertPool()
 	var authorities []services.CertAuthority
 	if clusterName == "" {
@@ -357,15 +387,14 @@ func ClientCertPool(client AccessCache, clusterName string) (*x509.CertPool, err
 		authorities = append(authorities, userCA)
 	}
 
-	for idx, auth := range authorities {
-		for idx2, keyPair := range auth.GetTLSKeyPairs() {
+	for _, auth := range authorities {
+		for _, keyPair := range auth.GetTLSKeyPairs() {
 			cert, err := tlsca.ParseCertificatePEM(keyPair.Cert)
 			if err != nil {
 				return nil, trace.Wrap(err)
 			}
 			log.Debugf("ClientCertPool -> %v", CertInfo(cert))
 			pool.AddCert(cert)
-			log.Errorf("ClientCertPool -> %d, %d", idx, idx2)
 		}
 	}
 	return pool, nil

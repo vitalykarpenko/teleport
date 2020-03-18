@@ -318,7 +318,7 @@ func (a *AuthWithRoles) RegisterUsingToken(req RegisterUsingTokenRequest) (*Pack
 	return a.authServer.RegisterUsingToken(req)
 }
 
-func (a *AuthWithRoles) RegisterUsingCert(req RegisterUsingTokenRequest) (*PackedKeys, error) {
+func (a *AuthWithRoles) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
 	// tokens have authz mechanism  on their own, no need to check
 	return a.authServer.RegisterUsingCert(req)
 }

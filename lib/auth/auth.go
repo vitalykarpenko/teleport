@@ -62,7 +62,6 @@ type AuthServerOption func(*AuthServer)
 
 // NewAuthServer creates and configures a new AuthServer instance
 func NewAuthServer(cfg *InitConfig, opts ...AuthServerOption) (*AuthServer, error) {
-	log.Errorf("!!! NewAuthServer auth.go %v", cfg.Trust)
 	if cfg.Trust == nil {
 		cfg.Trust = local.NewCAService(cfg.Backend)
 	}
@@ -1082,6 +1081,11 @@ func (s *AuthServer) checkTokenTTL(tok services.ProvisionToken) bool {
 	return true
 }
 
+type RegisterUsingCertRequest struct {
+	*RegisterUsingTokenRequest
+	IBCert []byte
+}
+
 // RegisterUsingTokenRequest is a request to register with
 // auth server using authentication token
 type RegisterUsingTokenRequest struct {
@@ -1134,6 +1138,8 @@ func (s *AuthServer) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedK
 	log.Infof("Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
 	log.Errorf("!!! Cloud RegisterUsingToken %v %v %v", string(req.PublicTLSKey), req.HostID, req.Token)
 	if err := req.CheckAndSetDefaults(); err != nil {
+
+		log.Errorf("!!! [RegisterUsingToken]]")
 		return nil, trace.Wrap(err)
 	}
 
@@ -1182,8 +1188,15 @@ func (s *AuthServer) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedK
 	return keys, nil
 }
 
-func (s *AuthServer) RegisterUsingCert(req RegisterUsingTokenRequest) (*PackedKeys, error) {
-	log.Infof("Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
+// RegisterUsingCert adds a new node to the Teleport cluster using previously issued token.
+// A node must also request a specific role (and the role must match one of the roles
+// the token was generated for).
+//
+// If a token was generated with a TTL, it gets enforced (can't register new nodes after TTL expires)
+// If a token was generated with a TTL=0, it means it's a single-use token and it gets destroyed
+// after a successful registration.
+func (s *AuthServer) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
+	log.Infof("[RegisterUsingCert]Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
 
 	// generate and return host certificate and keys
 	keys, err := s.GenerateServerKeys(GenerateServerKeysRequest{

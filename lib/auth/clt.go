@@ -75,6 +75,11 @@ type Dialer func(network, addr string) (net.Conn, error)
 // When Teleport servers connect to auth API, they usually establish an SSH
 // tunnel first, and then do HTTP-over-SSH. This client is wrapped by auth.TunClient
 // in lib/auth/tun.go
+
+type ClientAlt struct {
+	*Client
+}
+
 type Client struct {
 	sync.Mutex
 	ClientConfig
@@ -618,18 +623,15 @@ func (c *Client) GenerateToken(req GenerateTokenRequest) (string, error) {
 // RegisterUsingToken calls the auth service API to register a new node using a registration token
 // which was previously issued via GenerateToken.
 func (c *Client) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedKeys, error) {
-	log.Error("!!! POSTJSON client")
+	log.Error("!!! POSTJSON 1 client")
 	log.Error("!!! RegisterUsingToken client")
-	if err := req.CheckAndSetDefaults(); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	log.Error("!!! POSTJSON client")
 
-	out, err := c.PostJSON(c.Endpoint("token", "register"), req)
+	out, err := c.PostJSON(c.Endpoint("tokens", "register"), req)
 	if err != nil {
-		log.Errorf("!!! POSTJSON client %v ", err)
+		log.Errorf("!!! POSTJSON 2 client %v ", err)
 		return nil, trace.Wrap(err)
 	}
+	log.Errorf("!!! POSTJSON 3 client %v ", err)
 	var keys PackedKeys
 	if err := json.Unmarshal(out.Bytes(), &keys); err != nil {
 		return nil, trace.Wrap(err)
@@ -637,12 +639,32 @@ func (c *Client) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedKeys,
 	return &keys, nil
 }
 
-// RegisterUsingToken calls the auth service API to register a new node using a registration token
-// which was previously issued via GenerateToken.
-func (c *Client) RegisterUsingCert(req RegisterUsingTokenRequest) (*PackedKeys, error) {
-	log.Error("!!! RegisterUsingCert client")
-	log.Error("!!! 1- POSTJSON client")
-	log.Error("!!! 2-POSTJSON client")
+// // RegisterUsingCert calls the auth service API to register a new node using ibCert
+// func (c *Client) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
+
+// 	// req.IBCert - here is our certificate
+
+// 	return c.RegisterUsingToken(*req.RegisterUsingTokenRequest)
+
+// 	out, err := c.PostJSON(c.Endpoint("cert", "register"), req)
+// 	if err != nil {
+// 		return nil, trace.Wrap(err)
+// 	}
+// 	var keys PackedKeys
+// 	if err := json.Unmarshal(out.Bytes(), &keys); err != nil {
+// 		return nil, trace.Wrap(err)
+// 	}
+// 	return &keys, nil
+// }
+
+// RegisterUsingCert calls the auth service API to register a new node using ibCert
+func (c *ClientAlt) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
+	log.Errorf("[(c *ClientAlt) RegisterUsingCert] new endpoint")
+
+	// req.IBCert - here is our certificate
+
+	//return c.RegisterUsingToken(*req.RegisterUsingTokenRequest)
+	//	srv.POST("/:version/ibcert/register", srv.withAuth(srv.registerUsingToken))
 
 	out, err := c.PostJSON(c.Endpoint("ibcert", "register"), req)
 	if err != nil {
@@ -2813,6 +2835,14 @@ type IdentityService interface {
 	DeleteAllUsers() error
 }
 
+// ProvisioningServiceAlt is a service in control
+// of adding new nodes, auth servers and proxies to the cluster
+type ProvisioningServiceAlt interface {
+	// RegisterUsingCert calls the auth service API to register a new node via registration token
+	// which has been previously issued via GenerateToken
+	RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error)
+}
+
 // ProvisioningService is a service in control
 // of adding new nodes, auth servers and proxies to the cluster
 type ProvisioningService interface {
@@ -2836,12 +2866,14 @@ type ProvisioningService interface {
 	// which has been previously issued via GenerateToken
 	RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedKeys, error)
 
-	// RegisterUsingToken calls the auth service API to register a new node via registration token
-	// which has been previously issued via GenerateToken
-	RegisterUsingCert(req RegisterUsingTokenRequest) (*PackedKeys, error)
-
 	// RegisterNewAuthServer is used to register new auth server with token
 	RegisterNewAuthServer(token string) error
+}
+
+// ClientIAlt is a client to Auth service
+type ClientIAlt interface {
+	ProvisioningServiceAlt
+	ClientI
 }
 
 // ClientI is a client to Auth service
