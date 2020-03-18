@@ -1867,7 +1867,7 @@ func (h *Handler) hostCredentials(w http.ResponseWriter, r *http.Request, p http
 	if err := httplib.ReadJSON(r, &req); err != nil {
 		return nil, trace.Wrap(err)
 	}
-	log.Error("!!!!! hostCredentials req %v", req)
+
 	authClient := h.cfg.ProxyClient
 	packedKeys, err := authClient.RegisterUsingToken(req)
 	if err != nil {
