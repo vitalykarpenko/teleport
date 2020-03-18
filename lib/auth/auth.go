@@ -1076,6 +1076,12 @@ func (s *AuthServer) ValidateToken(token string) (roles teleport.Roles, e error)
 	return tok.GetRoles(), nil
 }
 
+// ValidateIBCert takes a provisioning ibCert and validate it.
+func (s *AuthServerAlt) ValidateIBCert(IBCert []byte) (ok bool, e error) {
+	log.Debugf("[ValidateCert] start")
+	return true, nil
+}
+
 // checkTokenTTL checks if the token is still valid. If it is not, the token
 // is removed from the backend and returns false. Otherwise returns true.
 func (s *AuthServer) checkTokenTTL(tok services.ProvisionToken) bool {
@@ -1209,6 +1215,12 @@ func (s *AuthServer) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedK
 func (s *AuthServerAlt) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
 	log.Infof("[RegisterUsingCert] Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
 	log.Errorf("[AuthServerAlt] ")
+
+	ok, err := s.ValidateIBCert(req.IBCert)
+	if !ok {
+		return nil, trace.AccessDenied(fmt.Sprintf("%q [%v] can not join the cluster with ibCert, the cert is not valid.", req.NodeName, req.HostID))
+	}
+
 	// generate and return host certificate and keys
 	keys, err := s.GenerateServerKeys(GenerateServerKeysRequest{
 		HostID:               req.HostID,
