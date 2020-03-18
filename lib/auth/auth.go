@@ -172,6 +172,17 @@ var (
 	)
 )
 
+// AuthServerAlt keeps the cluster together. It acts as a certificate authority (CA) for
+// a cluster and:
+//   - generates the keypair for the node it's running on
+//	 - invites other SSH nodes to a cluster, by issuing invite tokens
+//	 - adds other SSH nodes to a cluster, by checking their token and signing their keys
+//   - same for users and their sessions
+//   - checks public keys to see if they're signed by it (can be trusted or not)
+type AuthServerAlt struct {
+	*AuthServer
+}
+
 // AuthServer keeps the cluster together. It acts as a certificate authority (CA) for
 // a cluster and:
 //   - generates the keypair for the node it's running on
@@ -1195,9 +1206,9 @@ func (s *AuthServer) RegisterUsingToken(req RegisterUsingTokenRequest) (*PackedK
 // If a token was generated with a TTL, it gets enforced (can't register new nodes after TTL expires)
 // If a token was generated with a TTL=0, it means it's a single-use token and it gets destroyed
 // after a successful registration.
-func (s *AuthServer) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
+func (s *AuthServerAlt) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
 	log.Infof("[RegisterUsingCert] Node %q [%v] is trying to join with role: %v.", req.NodeName, req.HostID, req.Role)
-
+	log.Errorf("[AuthServerAlt] ")
 	// generate and return host certificate and keys
 	keys, err := s.GenerateServerKeys(GenerateServerKeysRequest{
 		HostID:               req.HostID,

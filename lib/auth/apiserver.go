@@ -506,6 +506,9 @@ func (s *APIServerAlt) withAuthAlt(handler HandlerWithAuthFuncAlt) httprouter.Ha
 				sessions:   s.SessionService,
 				alog:       s.AuthServer.IAuditLog,
 			},
+			&AuthServerAlt{
+				AuthServer: s.AuthServer,
+			},
 		}
 		version := p.ByName("version")
 		if version == "" {

@@ -41,6 +41,7 @@ import (
 // methods that focuses on authorizing every request
 type AuthWithRolesAlt struct {
 	*AuthWithRoles
+	authServer *AuthServerAlt
 }
 
 // AuthWithRoles is a wrapper around auth service
