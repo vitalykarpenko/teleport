@@ -37,6 +37,12 @@ import (
 	"github.com/tstranex/u2f"
 )
 
+// AuthWithRolesAlt is a wrapper around auth service
+// methods that focuses on authorizing every request
+type AuthWithRolesAlt struct {
+	*AuthWithRoles
+}
+
 // AuthWithRoles is a wrapper around auth service
 // methods that focuses on authorizing every request
 type AuthWithRoles struct {
@@ -318,7 +324,7 @@ func (a *AuthWithRoles) RegisterUsingToken(req RegisterUsingTokenRequest) (*Pack
 	return a.authServer.RegisterUsingToken(req)
 }
 
-func (a *AuthWithRoles) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
+func (a *AuthWithRolesAlt) RegisterUsingCert(req RegisterUsingCertRequest) (*PackedKeys, error) {
 	// tokens have authz mechanism  on their own, no need to check
 	return a.authServer.RegisterUsingCert(req)
 }

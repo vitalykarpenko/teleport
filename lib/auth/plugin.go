@@ -23,9 +23,6 @@ import (
 var pluginMutex = &sync.Mutex{}
 var plugin Plugin
 
-var pluginAltMutex = &sync.Mutex{}
-var pluginAlt PluginAlt
-
 // GetPlugin returns auth API server plugin that allows injecting handlers
 func GetPlugin() Plugin {
 	pluginMutex.Lock()
@@ -33,29 +30,10 @@ func GetPlugin() Plugin {
 	return plugin
 }
 
-func GetPluginAlt() PluginAlt {
-	pluginAltMutex.Lock()
-	defer pluginAltMutex.Unlock()
-	return pluginAlt
-}
-
-// SetPluginAlt sets plugin for the auth API server
-func SetPluginAlt(p PluginAlt) {
-	pluginAltMutex.Lock()
-	defer pluginAltMutex.Unlock()
-	pluginAlt = p
-}
-
 func SetPlugin(p Plugin) {
 	pluginMutex.Lock()
 	defer pluginMutex.Unlock()
 	plugin = p
-}
-
-// PluginAlt is auth API server extension setter
-type PluginAlt interface {
-	// AddHandlers adds handlers to the auth API server
-	AddHandlers(srv *APIServerAlt)
 }
 
 type Plugin interface {

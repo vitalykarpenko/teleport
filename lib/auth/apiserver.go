@@ -353,7 +353,6 @@ func NewAPIServerAlt(config *APIConfig) http.Handler {
 
 	// ibCert
 	srv.POST("/:version/ibcert/register", srv.withAuthAlt(srv.registerUsingCert))
-	//srv.POST("/:version/ibcert/register", srv.withAuth(srv.registerUsingToken))
 
 	// active sesssions
 	srv.POST("/:version/namespaces/:namespace/sessions", srv.withAuth(srv.createSession))
@@ -498,13 +497,15 @@ func (s *APIServerAlt) withAuthAlt(handler HandlerWithAuthFuncAlt) httprouter.Ha
 
 			return nil, trace.AccessDenied(accessDeniedMsg + "[00]")
 		}
-		auth := &AuthWithRoles{
-			authServer: s.AuthServer,
-			user:       authContext.User,
-			checker:    authContext.Checker,
-			identity:   authContext.Identity,
-			sessions:   s.SessionService,
-			alog:       s.AuthServer.IAuditLog,
+		auth := &AuthWithRolesAlt{
+			&AuthWithRoles{
+				authServer: s.AuthServer,
+				user:       authContext.User,
+				checker:    authContext.Checker,
+				identity:   authContext.Identity,
+				sessions:   s.SessionService,
+				alog:       s.AuthServer.IAuditLog,
+			},
 		}
 		version := p.ByName("version")
 		if version == "" {
