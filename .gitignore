@@ -63,3 +63,7 @@ ssh.config
 1-node-data
 auth.log
 node.log
+
+e
+
+examples/chart/teleport-demo/secrets
